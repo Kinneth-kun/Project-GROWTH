@@ -660,6 +660,7 @@ $portfolio_certificates = [];
 $portfolio_projects = [];
 $portfolio_resumes = [];
 $portfolio_completeness = 0;
+$job_preferences = []; // ADDED: For storing parsed job preferences
 
 if (isset($_GET['view_portfolio'])) {
     $grad_id = $_GET['view_portfolio'];
@@ -689,6 +690,33 @@ if (isset($_GET['view_portfolio'])) {
             }
         }
         $portfolio_details['profile_photo'] = $profile_photo;
+        
+        // MODIFIED: Get job preferences from graduates table (stored as JSON) - FIXED VERSION
+        if (!empty($portfolio_details['grad_job_preference'])) {
+            $job_preferences_json = $portfolio_details['grad_job_preference'];
+            $job_preferences = json_decode($job_preferences_json, true) ?? [];
+            
+            // If job preferences is a string (not an array), try to parse it
+            if (is_string($job_preferences)) {
+                $job_preferences = json_decode($job_preferences, true) ?? [];
+            }
+            
+            // If still not an array, try to explode by comma
+            if (!is_array($job_preferences) && is_string($job_preferences_json)) {
+                $job_preferences = array_map('trim', explode(',', $job_preferences_json));
+            }
+            
+            // Ensure we have an array
+            if (!is_array($job_preferences)) {
+                $job_preferences = [];
+            }
+        } else {
+            // If grad_job_preference is empty, use empty array
+            $job_preferences = [];
+        }
+        
+        // Store job preferences in portfolio_details for easy access in HTML
+        $portfolio_details['job_preferences'] = $job_preferences;
         
         // Get skills for the graduate
         $skills_stmt = $conn->prepare("
@@ -753,74 +781,49 @@ if (isset($_GET['view_portfolio'])) {
         if (count($portfolio_skills) >= 3) $completeness += 20;
         if (count($portfolio_skills) >= 5) $completeness += 10; // Bonus for more skills
         
+        // Check for job preferences
+        if (count($job_preferences) > 0) $completeness += 10;
+        
         // Cap at 100%
         $portfolio_completeness = min($completeness, 100);
     }
 }
 
-// Define course options from the previous code (short names only)
-$course_options = [
-    "BEEd",
-    "BECEd",
-    "BSNEd",
-    "BSEd",
-    "BSEd-Math",
-    "BSEd-Sci",
-    "BSEd-Eng",
-    "BSEd-Fil",
-    "BSEd-VE",
-    "BTLEd",
-    "BTLEd-IA",
-    "BTLEd-HE",
-    "BTLEd-ICT",
-    "BTVTEd",
-    "BTVTEd-AD",
-    "BTVTEd-AT",
-    "BTVTEd-FSMT",
-    "BTVTEd-ET",
-    "BTVTEd-ELXT",
-    "BTVTEd-GFDT",
-    "BTVTEd-WFT",
-    "BSCE",
-    "BSCpE",
-    "BSECE",
-    "BSEE",
-    "BSIE",
-    "BSME",
-    "BSMx",
-    "BSGD",
-    "BSTechM",
-    "BIT",
-    "BIT-AT",
-    "BIT-CvT",
-    "BIT-CosT",
-    "BIT-DT",
-    "BIT-ET",
-    "BIT-ELXT",
-    "BIT-FPST",
-    "BIT-FCM",
-    "BIT-GT",
-    "BIT-IDT",
-    "BIT-MST",
-    "BIT-PPT",
-    "BIT-RAC",
-    "BIT-WFT",
-    "BPA",
-    "BSHM",
-    "BSBA-MM",
-    "BSTM",
-    "BSIT",
-    "BSIS",
-    "BIT-CT",
-    "BAEL",
-    "BAL",
-    "BAF",
-    "BS Math",
-    "BS Stat",
-    "BS DevCom",
-    "BSPsy",
-    "BSN"
-];
+// MODIFIED: Fetch courses and organize them by college/department
+$courses_by_college = [];
+$colleges = [];
+
+try {
+    // Query to get all active courses from the database and organize by college
+    $courses_stmt = $conn->query("
+        SELECT course_id, course_code, course_name, course_college 
+        FROM courses 
+        WHERE is_active = TRUE 
+        ORDER BY course_college, course_name
+    ");
+    $all_courses = $courses_stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Organize courses by college
+    foreach ($all_courses as $course) {
+        $college = $course['course_college'];
+        if (!isset($courses_by_college[$college])) {
+            $courses_by_college[$college] = [];
+            $colleges[] = $college;
+        }
+        $courses_by_college[$college][] = $course;
+    }
+    
+    // If there are no courses in the database, use an empty array
+    if (empty($courses_by_college)) {
+        $courses_by_college = [];
+        $colleges = [];
+    }
+} catch (PDOException $e) {
+    // If there's an error, log it and use an empty array
+    error_log("Error fetching courses: " . $e->getMessage());
+    $courses_by_college = [];
+    $colleges = [];
+}
 
 // Handle AJAX request for notification refresh
 if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_notifications') {
@@ -1724,6 +1727,105 @@ $current_url = "admin_portfolio.php?" . http_build_query($current_url_params);
             font-weight: 500;
         }
         
+        /* MODIFIED: Enhanced Job Preferences Section - Better Spacing */
+        .preferences-section {
+            background: white;
+            border-radius: 12px;
+            padding: 22px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            border-top: 4px solid var(--purple);
+        }
+        
+        .preferences-title {
+            font-size: 18px;
+            color: var(--primary-color);
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid rgba(110, 3, 3, 0.1);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .preferences-title i {
+            color: var(--purple);
+        }
+        
+        .preferences-count {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 18px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            border-radius: 8px;
+            border-left: 3px solid var(--purple);
+        }
+        
+        .preferences-count i {
+            color: var(--purple);
+            font-size: 1rem;
+        }
+        
+        .preference-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 5px;
+        }
+        
+        .preference-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: linear-gradient(135deg, var(--purple), #8a2be2);
+            color: white;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 3px 8px rgba(106, 13, 173, 0.2);
+            transition: all 0.3s;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .preference-tag:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(106, 13, 173, 0.3);
+        }
+        
+        .preference-tag i {
+            font-size: 0.9rem;
+        }
+        
+        .no-preferences {
+            color: #666;
+            font-style: italic;
+            font-size: 14px;
+            padding: 25px 20px;
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            border-radius: 10px;
+            text-align: center;
+            border: 1px dashed #ddd;
+        }
+        
+        .no-preferences i {
+            font-size: 2rem;
+            margin-bottom: 12px;
+            color: #ccc;
+            display: block;
+        }
+        
+        .no-preferences p {
+            margin: 0;
+            line-height: 1.5;
+        }
+        
         .view-resume {
             display: block;
             width: 100%;
@@ -1959,7 +2061,7 @@ $current_url = "admin_portfolio.php?" . http_build_query($current_url_params);
             top: 0;
             width: 4px;
             height: 100%;
-            background: linear-gradient(180deg, var(--primary-color), var(--secondary-color));
+            background: linear-gradient180deg, var(--primary-color), var(--secondary-color);
             border-radius: 2px;
         }
         
@@ -2390,12 +2492,29 @@ $current_url = "admin_portfolio.php?" . http_build_query($current_url_params);
                                 </span>
                                 <span class="detail-value"><?= htmlspecialchars($portfolio_details['grad_year_graduated']) ?></span>
                             </div>
-                            <div class="detail-item">
-                                <span class="detail-label">
-                                    <i class="fas fa-briefcase"></i>
-                                    Job Preference
-                                </span>
-                                <span class="detail-value"><?= htmlspecialchars($portfolio_details['grad_job_preference']) ?></span>
+                        </div>
+                        
+                        <!-- MODIFIED: Enhanced Job Preferences Section with Better Spacing -->
+                        <div class="preferences-section">
+                            <h3 class="preferences-title"><i class="fas fa-bullseye"></i> Job Preferences</h3>
+                            <div class="preferences-count">
+                                <i class="fas fa-list"></i> 
+                                <?= count($portfolio_details['job_preferences']) ?> preference(s) set
+                            </div>
+                            <div class="preference-tags">
+                                <?php if (!empty($portfolio_details['job_preferences'])): ?>
+                                    <?php foreach ($portfolio_details['job_preferences'] as $preference): ?>
+                                        <div class="preference-tag">
+                                            <i class="fas fa-check"></i>
+                                            <?= htmlspecialchars($preference) ?>
+                                        </div>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <div class="no-preferences">
+                                        <i class="fas fa-info-circle"></i>
+                                        No job preferences set yet
+                                    </div>
+                                <?php endif; ?>
                             </div>
                         </div>
                         
@@ -2701,9 +2820,23 @@ $current_url = "admin_portfolio.php?" . http_build_query($current_url_params);
                 <label class="filter-label">Course</label>
                 <select class="filter-select" id="courseFilter">
                     <option value="all" <?= $course_filter === 'all' ? 'selected' : '' ?>>All Courses</option>
-                    <?php foreach ($course_options as $course): ?>
-                        <option value="<?= $course ?>" <?= $course_filter === $course ? 'selected' : '' ?>><?= $course ?></option>
-                    <?php endforeach; ?>
+                    <?php if (!empty($courses_by_college) && !empty($colleges)): ?>
+                        <?php foreach ($colleges as $college): ?>
+                            <?php if (isset($courses_by_college[$college]) && !empty($courses_by_college[$college])): ?>
+                                <optgroup label="<?= htmlspecialchars($college) ?>">
+                                    <?php foreach ($courses_by_college[$college] as $course): ?>
+                                        <option value="<?= htmlspecialchars($course['course_code']) ?>" 
+                                            <?= $course_filter === $course['course_code'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($course['course_name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <!-- NO HARDCODED FALLBACK - Database courses only -->
+                        <option value="all" selected>No courses available in database</option>
+                    <?php endif; ?>
                 </select>
             </div>
             <div class="filter-group">
@@ -3012,6 +3145,19 @@ $current_url = "admin_portfolio.php?" . http_build_query($current_url_params);
                     </div>
                 </div>
                 
+                <?php if (!empty($portfolio_details['job_preferences'])): ?>
+                <div class="resume-section">
+                    <h2 class="resume-section-title"><i class="fas fa-bullseye"></i> Job Preferences</h2>
+                    <div class="skills-grid">
+                        <?php foreach ($portfolio_details['job_preferences'] as $preference): ?>
+                        <div class="skill-item">
+                            <div class="skill-name"><?= htmlspecialchars($preference) ?></div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+                
                 <?php if (!empty($portfolio_skills)): ?>
                 <div class="resume-section">
                     <h2 class="resume-section-title"><i class="fas fa-tools"></i> Technical Skills</h2>
@@ -3109,10 +3255,6 @@ $current_url = "admin_portfolio.php?" . http_build_query($current_url_params);
                 
                 <div class="resume-section">
                     <h2 class="resume-section-title"><i class="fas fa-user-tie"></i> Additional Information</h2>
-                    <div class="resume-item">
-                        <div class="resume-item-title"><i class="fas fa-briefcase"></i> Job Preference</div>
-                        <div class="resume-item-details"><?= $portfolio_details['grad_job_preference'] ?></div>
-                    </div>
                     <?php if (!empty($portfolio_details['usr_gender'])): ?>
                     <div class="resume-item">
                         <div class="resume-item-title"><i class="fas fa-venus-mars"></i> Gender</div>

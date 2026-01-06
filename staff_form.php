@@ -16,6 +16,86 @@ try {
     die("Database connection failed. Please try again later.");
 }
 
+// PSGC API Endpoints
+define('REGIONS_API', 'https://psgc.gitlab.io/api/regions/');
+define('PROVINCES_API', 'https://psgc.gitlab.io/api/regions/{code}/provinces/');
+define('CITIES_API', 'https://psgc.gitlab.io/api/provinces/{code}/cities-municipalities/');
+define('BARANGAYS_API', 'https://psgc.gitlab.io/api/cities-municipalities/{code}/barangays/');
+
+function fetchFromAPI($url) {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($httpCode !== 200) {
+        error_log("PSGC API Error: HTTP $httpCode for URL: $url");
+        return null;
+    }
+    
+    return json_decode($response, true);
+}
+
+function sortByName($a, $b) {
+    return strcmp($a['name'], $b['name']);
+}
+
+// Handle PSGC API requests
+if (isset($_GET['getRegions'])) {
+    header('Content-Type: application/json');
+    $regions = fetchFromAPI(REGIONS_API);
+    if ($regions && is_array($regions)) {
+        usort($regions, 'sortByName');
+        echo json_encode($regions);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+if (isset($_GET['getProvinces']) && isset($_GET['regionCode'])) {
+    header('Content-Type: application/json');
+    $url = str_replace('{code}', $_GET['regionCode'], PROVINCES_API);
+    $provinces = fetchFromAPI($url);
+    if ($provinces && is_array($provinces)) {
+        usort($provinces, 'sortByName');
+        echo json_encode($provinces);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+if (isset($_GET['getCities']) && isset($_GET['provinceCode'])) {
+    header('Content-Type: application/json');
+    $url = str_replace('{code}', $_GET['provinceCode'], CITIES_API);
+    $cities = fetchFromAPI($url);
+    if ($cities && is_array($cities)) {
+        usort($cities, 'sortByName');
+        echo json_encode($cities);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+if (isset($_GET['getBarangays']) && isset($_GET['cityCode'])) {
+    header('Content-Type: application/json');
+    $url = str_replace('{code}', $_GET['cityCode'], BARANGAYS_API);
+    $barangays = fetchFromAPI($url);
+    if ($barangays && is_array($barangays)) {
+        usort($barangays, 'sortByName');
+        echo json_encode($barangays);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
 // Check if auto-approve is enabled in system settings
 $auto_approve_users = 0;
 try {
@@ -139,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $position = trim($_POST['position'] ?? '');
     $employee_id = trim($_POST['employee_id'] ?? '');
     
-    // Address fields
+    // Address fields - IMPORTANT: Store PSGC names
     $region = trim($_POST['region'] ?? '');
     $province = trim($_POST['province'] ?? '');
     $city = trim($_POST['city'] ?? '');
@@ -161,26 +241,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Combine country code and phone number
     $full_phone = $country_code . $phone;
     
-    // Combine address components
-    $permanent_address = "";
-    if (!empty($street_address)) {
-        $permanent_address .= $street_address . ", ";
-    }
-    if (!empty($barangay)) {
-        $permanent_address .= $barangay . ", ";
-    }
-    if (!empty($city)) {
-        $permanent_address .= $city . ", ";
-    }
-    if (!empty($province)) {
-        $permanent_address .= $province . ", ";
-    }
-    if (!empty($region)) {
-        $permanent_address .= $region;
-    }
-    if (!empty($zip_code)) {
-        $permanent_address .= " " . $zip_code;
-    }
+    // Combine address components properly
+    $address_components = [];
+    if (!empty($street_address)) $address_components[] = $street_address;
+    if (!empty($barangay)) $address_components[] = $barangay;
+    if (!empty($city)) $address_components[] = $city;
+    if (!empty($province)) $address_components[] = $province;
+    if (!empty($region)) $address_components[] = $region;
+    if (!empty($zip_code)) $address_components[] = "ZIP: " . $zip_code;
+    
+    $permanent_address = implode(', ', $address_components);
     
     // Handle staff ID photo uploads (front and back)
     $staff_id_photo_front = null;
@@ -918,6 +988,66 @@ ob_end_flush();
       background: #8a0404;
     }
     
+    /* Address Loading Spinner */
+    .loading-spinner {
+      display: none;
+      color: var(--primary-color);
+      text-align: center;
+      padding: 10px;
+    }
+    
+    .loading-spinner i {
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    /* Form validation styles */
+    .form-input.error, .form-select.error, .form-textarea.error {
+      border-color: var(--red);
+      background-color: #fff8f8;
+    }
+    
+    .error-message {
+      color: var(--red);
+      font-size: 0.85rem;
+      margin-top: 5px;
+      display: none;
+    }
+    
+    .error-message.show {
+      display: block;
+    }
+    
+    .form-group.has-error .form-label {
+      color: var(--red);
+    }
+    
+    /* Loading overlay */
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.8);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      display: none;
+    }
+    
+    .loading-spinner-large {
+      font-size: 3rem;
+      color: var(--primary-color);
+      margin-bottom: 20px;
+    }
+    
     /* Responsive adjustments */
     @media (max-width: 968px) {
       .form-grid {
@@ -981,6 +1111,14 @@ ob_end_flush();
   </style>
 </head>
 <body>
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner-large">
+      <i class="fas fa-spinner fa-spin"></i>
+    </div>
+    <p>Processing your request...</p>
+  </div>
+  
   <div class="container">
     <div class="header">
       <h1>Complete Your Staff Profile</h1>
@@ -1022,7 +1160,7 @@ ob_end_flush();
         </div>
       <?php endif; ?>
       
-      <form method="POST" action="" enctype="multipart/form-data">
+      <form method="POST" action="" enctype="multipart/form-data" id="staffForm">
         <div class="form-grid">
           <!-- Personal Information Section -->
           <div class="form-section personal-info">
@@ -1039,12 +1177,14 @@ ob_end_flush();
                   <input type="text" id="last_name" name="last_name" class="form-input" 
                          value="<?php echo isset($_POST['last_name']) ? htmlspecialchars($_POST['last_name']) : ''; ?>" 
                          required placeholder="Last Name">
+                  <div class="error-message" id="last_name_error"></div>
                 </div>
                 <div>
                   <label class="form-label" for="first_name">First Name</label>
                   <input type="text" id="first_name" name="first_name" class="form-input" 
                          value="<?php echo isset($_POST['first_name']) ? htmlspecialchars($_POST['first_name']) : ''; ?>" 
                          required placeholder="First Name">
+                  <div class="error-message" id="first_name_error"></div>
                 </div>
                 <div>
                   <label class="form-label" for="middle_name">Middle Name</label>
@@ -1060,6 +1200,7 @@ ob_end_flush();
               <input type="email" id="email" name="email" class="form-input" 
                      value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : htmlspecialchars($user_data['usr_email']); ?>" 
                      required placeholder="Enter your email address">
+              <div class="error-message" id="email_error"></div>
             </div>
             
             <div class="form-group">
@@ -1089,6 +1230,7 @@ ob_end_flush();
                        placeholder="91234567890" maxlength="11" pattern="[0-9]{11}" 
                        title="Please enter exactly 11 digits (numbers only)">
               </div>
+              <div class="error-message" id="phone_error"></div>
             </div>
             
             <div class="form-group">
@@ -1113,30 +1255,21 @@ ob_end_flush();
                   <label class="form-label" for="region">Region <span class="required">*</span></label>
                   <select id="region" name="region" class="form-select" required>
                     <option value="">Select Region</option>
-                    <option value="NCR" <?php echo (isset($_POST['region']) && $_POST['region'] === 'NCR') ? 'selected' : ''; ?>>National Capital Region (NCR)</option>
-                    <option value="CAR" <?php echo (isset($_POST['region']) && $_POST['region'] === 'CAR') ? 'selected' : ''; ?>>Cordillera Administrative Region (CAR)</option>
-                    <option value="Region I" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region I') ? 'selected' : ''; ?>>Region I - Ilocos Region</option>
-                    <option value="Region II" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region II') ? 'selected' : ''; ?>>Region II - Cagayan Valley</option>
-                    <option value="Region III" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region III') ? 'selected' : ''; ?>>Region III - Central Luzon</option>
-                    <option value="Region IV-A" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region IV-A') ? 'selected' : ''; ?>>Region IV-A - CALABARZON</option>
-                    <option value="Region IV-B" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region IV-B') ? 'selected' : ''; ?>>Region IV-B - MIMAROPA</option>
-                    <option value="Region V" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region V') ? 'selected' : ''; ?>>Region V - Bicol Region</option>
-                    <option value="Region VI" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region VI') ? 'selected' : ''; ?>>Region VI - Western Visayas</option>
-                    <option value="Region VII" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region VII') ? 'selected' : ''; ?>>Region VII - Central Visayas</option>
-                    <option value="Region VIII" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region VIII') ? 'selected' : ''; ?>>Region VIII - Eastern Visayas</option>
-                    <option value="Region IX" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region IX') ? 'selected' : ''; ?>>Region IX - Zamboanga Peninsula</option>
-                    <option value="Region X" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region X') ? 'selected' : ''; ?>>Region X - Northern Mindanao</option>
-                    <option value="Region XI" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region XI') ? 'selected' : ''; ?>>Region XI - Davao Region</option>
-                    <option value="Region XII" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region XII') ? 'selected' : ''; ?>>Region XII - SOCCSKSARGEN</option>
-                    <option value="Region XIII" <?php echo (isset($_POST['region']) && $_POST['region'] === 'Region XIII') ? 'selected' : ''; ?>>Region XIII - Caraga</option>
-                    <option value="BARMM" <?php echo (isset($_POST['region']) && $_POST['region'] === 'BARMM') ? 'selected' : ''; ?>>Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)</option>
                   </select>
+                  <div class="error-message" id="region_error"></div>
+                  <div class="loading-spinner" id="regionLoading">
+                    <i class="fas fa-spinner"></i> Loading regions...
+                  </div>
                 </div>
                 <div>
                   <label class="form-label" for="province">Province <span class="required">*</span></label>
-                  <select id="province" name="province" class="form-select" required>
+                  <select id="province" name="province" class="form-select" required disabled>
                     <option value="">Select Province</option>
                   </select>
+                  <div class="error-message" id="province_error"></div>
+                  <div class="loading-spinner" id="provinceLoading" style="display: none;">
+                    <i class="fas fa-spinner"></i> Loading provinces...
+                  </div>
                 </div>
               </div>
             </div>
@@ -1145,15 +1278,23 @@ ob_end_flush();
               <div class="address-container">
                 <div>
                   <label class="form-label" for="city">City/Municipality <span class="required">*</span></label>
-                  <select id="city" name="city" class="form-select" required>
+                  <select id="city" name="city" class="form-select" required disabled>
                     <option value="">Select City/Municipality</option>
                   </select>
+                  <div class="error-message" id="city_error"></div>
+                  <div class="loading-spinner" id="cityLoading" style="display: none;">
+                    <i class="fas fa-spinner"></i> Loading cities...
+                  </div>
                 </div>
                 <div>
                   <label class="form-label" for="barangay">Barangay <span class="required">*</span></label>
-                  <select id="barangay" name="barangay" class="form-select" required>
+                  <select id="barangay" name="barangay" class="form-select" required disabled>
                     <option value="">Select Barangay</option>
                   </select>
+                  <div class="error-message" id="barangay_error"></div>
+                  <div class="loading-spinner" id="barangayLoading" style="display: none;">
+                    <i class="fas fa-spinner"></i> Loading barangays...
+                  </div>
                 </div>
               </div>
             </div>
@@ -1208,6 +1349,7 @@ ob_end_flush();
                      required pattern="[A-Za-z0-9\-]+" 
                      title="Alphanumeric characters and hyphens only"
                      placeholder="Enter your employee ID number">
+              <div class="error-message" id="employee_id_error"></div>
             </div>
 
             <!-- Enhanced Staff ID Photo Upload Section -->
@@ -1237,6 +1379,7 @@ ob_end_flush();
                   </div>
                   <input type="file" id="staff_id_photo_front" name="staff_id_photo_front" class="file-input" 
                          accept="image/jpeg,image/jpg,image/png,image/gif" required>
+                  <div class="error-message" id="staff_id_photo_front_error"></div>
                 </div>
                 
                 <!-- Back Photo Upload -->
@@ -1260,6 +1403,7 @@ ob_end_flush();
                   </div>
                   <input type="file" id="staff_id_photo_back" name="staff_id_photo_back" class="file-input" 
                          accept="image/jpeg,image/jpg,image/png,image/gif" required>
+                  <div class="error-message" id="staff_id_photo_back_error"></div>
                 </div>
               </div>
             </div>
@@ -1267,7 +1411,7 @@ ob_end_flush();
         </div>
         
         <div class="action-buttons">
-          <button type="submit" class="btn btn-primary">
+          <button type="submit" class="btn btn-primary" id="submitBtn">
             <i class="fas fa-check-circle"></i> Complete Registration
           </button>
           <a href="index.php?page=select_role" class="btn btn-outline">
@@ -1279,492 +1423,617 @@ ob_end_flush();
   </div>
 
   <script>
-    // Comprehensive Philippine Address Data
-    const regions = {
-      "NCR": ["Metro Manila"],
-      "CAR": ["Abra", "Apayao", "Benguet", "Ifugao", "Kalinga", "Mountain Province"],
-      "Region I": ["Ilocos Norte", "Ilocos Sur", "La Union", "Pangasinan"],
-      "Region II": ["Batanes", "Cagayan", "Isabela", "Nueva Vizcaya", "Quirino"],
-      "Region III": ["Aurora", "Bataan", "Bulacan", "Nueva Ecija", "Pampanga", "Tarlac", "Zambales"],
-      "Region IV-A": ["Batangas", "Cavite", "Laguna", "Quezon", "Rizal"],
-      "Region IV-B": ["Marinduque", "Occidental Mindoro", "Oriental Mindoro", "Palawan", "Romblon"],
-      "Region V": ["Albay", "Camarines Norte", "Camarines Sur", "Catanduanes", "Masbate", "Sorsogon"],
-      "Region VI": ["Aklan", "Antique", "Capiz", "Guimaras", "Iloilo", "Negros Occidental"],
-      "Region VII": ["Bohol", "Cebu", "Negros Oriental", "Siquijor"],
-      "Region VIII": ["Biliran", "Eastern Samar", "Leyte", "Northern Samar", "Samar", "Southern Leyte"],
-      "Region IX": ["Zamboanga del Norte", "Zamboanga del Sur", "Zamboanga Sibugay"],
-      "Region X": ["Bukidnon", "Camiguin", "Lanao del Norte", "Misamis Occidental", "Misamis Oriental"],
-      "Region XI": ["Davao de Oro", "Davao del Norte", "Davao del Sur", "Davao Occidental", "Davao Oriental"],
-      "Region XII": ["Cotabato", "Sarangani", "South Cotabato", "Sultan Kudarat"],
-      "Region XIII": ["Agusan del Norte", "Agusan del Sur", "Dinagat Islands", "Surigao del Norte", "Surigao del Sur"],
-      "BARMM": ["Basilan", "Lanao del Sur", "Maguindanao", "Sulu", "Tawi-Tawi"]
-    };
-
-    const provinces = {
-      "Metro Manila": ["Manila", "Quezon City", "Caloocan", "Las Piñas", "Makati", "Malabon", "Mandaluyong", "Marikina", "Muntinlupa", "Navotas", "Parañaque", "Pasay", "Pasig", "Pateros", "San Juan", "Taguig", "Valenzuela"],
-      "Pampanga": ["Angeles City", "San Fernando", "Mabalacat", "Arayat", "Santa Ana", "Magalang", "Mexico", "Floridablanca", "Lubao", "Guagua", "Apalit", "Candaba", "Macabebe", "Masantol", "San Luis", "San Simon", "Santo Tomas", "Sasmuan"],
-      "Cebu": ["Cebu City", "Mandaue City", "Lapu-Lapu City", "Talisay City", "Toledo City", "Danao City", "Naga City", "Carcar City", "Bogo City", "Cordova", "Compostela", "Liloan", "Minglanilla", "San Fernando", "San Remigio"],
-      "Bohol": ["Tagbilaran City", "Carmen", "Dauis", "Panglao", "Corella", "Sikatuna", "Baclayon", "Alburquerque", "Loay", "Loboc", "Antequera", "Balilihan", "Calape", "Catigbian", "Clarin", "Cortes", "Dimiao", "Garcia Hernandez"],
-      "Negros Oriental": ["Dumaguete City", "Bais City", "Bayawan City", "Tanjay City", "Guihulngan City", "Valencia", "Sibulan", "Bacong", "Dauin", "Zamboanguita", "Amlan", "Ayungon", "Bindoy", "Dumaguete", "Jimalalud", "La Libertad", "Mabinay", "Manjuyod"],
-      "Ilocos Norte": ["Laoag City", "Batac City", "Paoay", "Vintar", "Bacarra", "Sarrat", "San Nicolas", "Badoc", "Pinili", "Currimao", "Banna", "Burgos", "Carasi", "Dingras", "Dumalneg", "Marcos", "Nueva Era", "Pagudpud"],
-      "Ilocos Sur": ["Vigan City", "Candon City", "Narvacan", "Santa Maria", "Santa Catalina", "Santiago", "San Esteban", "Caoayan", "Santa", "Magsingal", "Banayoyo", "Bantay", "Burgos", "Cabugao", "Cervantes", "Galimuyod", "Gregorio del Pilar", "Lidlidda"],
-      "La Union": ["San Fernando City", "Bauang", "Agoo", "Aringay", "Bacnotan", "Naguilian", "Tubao", "Rosario", "Santo Tomas", "Caba", "Bagulin", "Balaoan", "Bangar", "Burgos", "Luna", "Pugo", "San Gabriel", "Sudipen"],
-      "Pangasinan": ["Dagupan City", "San Carlos City", "Urdaneta City", "Lingayen", "Calasiao", "Mangaldan", "Binmaley", "Manaoag", "Bayambang", "Alaminos City", "Anda", "Asingan", "Balungao", "Bani", "Basista", "Bautista", "Binalonan", "Bolinao"],
-      "Bataan": ["Balanga City", "Mariveles", "Dinalupihan", "Orani", "Samal", "Abucay", "Pilar", "Bagac", "Morong", "Limay", "Hermosa", "Orion"],
-      "Bulacan": ["Malolos", "Meycauayan", "San Jose del Monte", "Santa Maria", "Marilao", "Bocaue", "Guiguinto", "Plaridel", "Pulilan", "Calumpit", "Balagtas", "Baliwag", "Bustos", "Hagonoy", "Obando", "Pandi", "Paombong", "San Ildefonso"],
-      "Nueva Ecija": ["Cabanatuan City", "Palayan City", "Gapan City", "San Jose City", "Science City of Muñoz", "Santa Rosa", "Peñaranda", "Lupao", "Talavera", "Rizal", "Aliaga", "Bongabon", "Cabiao", "Carranglan", "Cuyapo", "Gabaldon", "General Mamerto Natividad", "General Tinio"],
-      "Tarlac": ["Tarlac City", "Concepcion", "Capas", "Bamban", "Paniqui", "Camiling", "Moncada", "Gerona", "Victoria", "San Manuel", "Anao", "La Paz", "Mayantoc", "Pura", "Ramos", "San Clemente", "Santa Ignacia"],
-      "Zambales": ["Olongapo City", "Subic", "Iba", "Botolan", "Castillejos", "San Marcelino", "San Antonio", "San Felipe", "Cabangan", "Palauig", "Candelaria", "Masinloc", "Sta. Cruz"],
-      "Batangas": ["Batangas City", "Lipa City", "Tanauan City", "Santo Tomas", "Bauan", "Nasugbu", "Calaca", "Balayan", "Lian", "Taal", "Alitagtag", "Balete", "Cuenca", "Ibaan", "Laurel", "Lemery", "Malvar", "Mataasnakahoy"],
-      "Cavite": ["Dasmarinas", "Bacoor", "Imus", "Tagaytay City", "General Trias", "Trece Martires City", "Silang", "Kawit", "Noveleta", "Rosario", "Alfonso", "Amadeo", "Carmona", "Gen. Mariano Alvarez", "Indang", "Magallanes", "Maragondon", "Mendez"],
-      "Laguna": ["Calamba City", "Santa Rosa City", "San Pablo City", "Biñan", "Cabuyao", "San Pedro", "Los Baños", "Sta. Cruz", "Nagcarlan", "Liliw", "Alaminos", "Bay", "Calauan", "Cavinti", "Famy", "Kalayaan", "Luisiana", "Lumban"],
-      "Rizal": ["Antipolo City", "Taytay", "Cainta", "Binangonan", "Angono", "Rodriguez", "San Mateo", "Baras", "Tanay", "Pililla", "Cardona", "Jalajala", "Morong", "Teresa"],
-      "Quezon": ["Lucena City", "Tayabas", "Candelaria", "Sariaya", "Gumaca", "Lopez", "Atimonan", "Mauban", "Infanta", "Real", "Agdangan", "Alabat", "Buenavista", "Burdeos", "Calauag", "Gen. Luna", "Gen. Nakar", "Guinayangan"],
-      "Albay": ["Legazpi City", "Ligao City", "Tabaco City", "Daraga", "Guinobatan", "Camalig", "Polangui", "Oas", "Libon", "Malilipot", "Bacacay", "Malinao", "Sto. Domingo", "Rapu-Rapu", "Jovellar", "Pio Duran"],
-      "Camarines Sur": ["Naga City", "Iriga City", "Pili", "Calabanga", "Libmanan", "Nabua", "Buhi", "Baao", "Bula", "Bato", "Bombon", "Cabusao", "Caramoan", "Del Gallego", "Gainza", "Garchitorena", "Lagonoy", "Magarao"]
-    };
-
-    const cities = {
-      "Cebu City": ["Sambag I", "Sambag II", "Capitol Site", "Kamputhaw", "Luz", "Ermita", "Mabolo", "Talamban", "Tisa", "Labangon", "Banilad", "Basak Pardo", "Bulacao", "Busay", "Calamba", "Cogon Pardo", "Guadalupe"],
-      "Mandaue City": ["Alang-alang", "Bakilid", "Pakna-an", "Basak", "Labogon", "Banilad", "Cabancalan", "Casili", "Casuntingan", "Centro", "Cubacub", "Guizo", "Ibabao-Estancia", "Jagobiao", "Looc", "Maguikay", "Opao"],
-      "Lapu-Lapu City": ["Agus", "Babag", "Bankal", "Baring", "Basak", "Buaya", "Calawisan", "Canjulao", "Caw-oy", "Cawhagan", "Gun-ob", "Ibo", "Looc", "Mactan", "Maribago", "Marigondon", "Pajac", "Pajo", "Pangan-an", "Pusok", "Sabang", "Santa Rosa", "Subabasbas", "Tingo"],
-      "Talisay City": ["Biasong", "Bulacao", "Cansojong", "Camp IV", "Dumlog", "Jaclupan", "Lagtang", "Lawaan I", "Lawaan II", "Lawaan III", "Linao", "Maghaway", "Manipis", "Mohon", "Poblacion", "Pooc", "San Isidro", "San Roque", "Tabunoc", "Tangke"],
-      "Toledo City": ["Awihao", "Bagakay", "Bato", "Biga", "Bulongan", "Bunga", "Cantabaco", "Capitol", "Carmen", "Daanglungsod", "Don Andres Soriano", "Dumlog", "Ilihan", "Landahan", "Loay", "Luray II", "Matab-ang", "Media Once", "Pangamihan", "Poblacion", "Poog", "Putingbato", "Sagay", "Sam-ang", "Sangi", "Sto. Niño", "Subayon", "Talavera", "Tungkay"],
-      "Danao City": ["Baliang", "Bayabas", "Binaliw", "Cabalawan", "Cagat-Lamac", "Cahumayan", "Cambanay", "Cambubho", "Cogon-Cruz", "Danasan", "Dungga", "Dunggoan", "Guinacot", "Guinsay", "Ibo", "Langosig", "Lawaan", "Licolico", "Looc", "Magtagobtob", "Malapoc", "Manlayag", "Mantija", "Mercado", "Oguis", "Pili", "Poblacion", "Quisol", "Sabang", "Sacsac", "Sandayong", "Santa Rosa", "Santican", "Sibacan", "Suba", "Taboc", "Taytay", "Togonon", "Tuburan Sur"],
-      "Naga City": ["Alang-alang", "Balirong", "Bairan", "Bascaran", "Cabolawan", "Cantao-an", "Central Poblacion", "Cogon", "Colon", "East Poblacion", "Inoburan", "Inayagan", "Jaguimit", "Lanas", "Langtad", "Lutac", "Mainit", "Mayana", "Naalad", "North Poblacion", "Pangdan", "Patag", "South Poblacion", "Tagnocon", "Tangke", "Tinaan", "Uling", "West Poblacion"],
-      "Carcar City": ["Bolinawan", "Buenavista", "Calidngan", "Can-asujan", "Guadalupe", "Liburon", "Napo", "Ocana", "Perrelos", "Poblacion I", "Poblacion II", "Poblacion III", "Tuyom", "Valladolid"],
-      "Bogo City": ["Anonang Norte", "Anonang Sur", "Banban", "Binabag", "Campusong", "Cantagay", "Cayang", "Dakit", "Don Pedro Rodriguez", "Gairan", "Guadalupe", "La Paz", "La Purisima Concepcion", "Libertad", "Lourdes", "Malingin", "Marangog", "Nailon", "Odlot", "Pandan", "Polambato", "Sambag", "San Vicente", "Santa Cruz", "Sibongan", "Sulangan", "Taytayan", "Yati"],
-      "Cordova": ["Alegria", "Bangbang", "Buagsong", "Catarman", "Cogon", "Dapitan", "Day-as", "Gabriela", "Gilutongan", "Ibabao", "Pilipog", "Poblacion", "San Miguel"],
-      "Compostela": ["Bagalnga", "Basak", "Buluang", "Cabadiangan", "Cambayog", "Canamucan", "Cogon", "Dapdap", "Estaca", "Lagundi", "Mulao", "Panangban", "Poblacion", "Tag-ube", "Tamiao"],
-      "Liloan": ["Cabadiangan", "Calero", "Catarman", "Cotcot", "Jubay", "Lataban", "Mulao", "Poblacion", "San Roque", "San Vicente", "Santa Cruz", "Tabla", "Tayud", "Yati"],
-      "Minglanilla": ["Cadulawan", "Calajo-an", "Camp 7", "Camp 8", "Cuanos", "Guindaruhan", "Linao", "Mangoto", "Pakigne", "Poblacion Ward I", "Poblacion Ward II", "Poblacion Ward III", "Tubod", "Tulay", "Tungkop", "Tungkil", "Tungkop", "Vito"],
-      "San Fernando": ["Balud", "Balungag", "Basak", "Bugho", "Cabatbatan", "Greenhills", "Ilaya", "Lantawan", "Liburon", "Magsico", "Panadtaran", "Poblacion North", "Poblacion South", "San Isidro", "Sangat", "Tabionan", "Tananas", "Tinaan", "Tonggo"],
-      "San Remigio": ["Anapog", "Argawanon", "Bagtic", "Bancasan", "Batad", "Busogon", "Calambua", "Canagahan", "Dapdap", "Gawaygaway", "Hagnaya", "Kayam", "Kinawahan", "Lamintak", "Lawis", "Luyang", "Mancilang", "Poblacion", "Punao", "Sab-a", "San Miguel", "Tambongon", "To-ong", "Victoria"]
-    };
-
-    const barangays = {
-      "Alang-alang": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Bakilid": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pakna-an": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Basak": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Labogon": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Banilad": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cabancalan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Casili": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Casuntingan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Centro": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cubacub": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Guizo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Ibabao-Estancia": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Jagobiao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Looc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Maguikay": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Opao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Agus": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Babag": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Bankal": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Baring": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Basak": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Buaya": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Calawisan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Canjulao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Caw-oy": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cawhagan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Gun-ob": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Ibo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Looc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Mactan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Maribago": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Marigondon": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pajac": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pajo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pangan-an": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pusok": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Sabang": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Santa Rosa": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Subabasbas": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Tingo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Biasong": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Bulacao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cansojong": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Camp IV": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Dumlog": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Jaclupan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lagtang": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lawaan I": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lawaan II": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lawaan III": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Linao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Maghaway": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Manipis": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Mohon": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Poblacion": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pooc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "San Isidro": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "San Roque": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Tabunoc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Tangke": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"]
-    };
-
-    // Enhanced Phone Number Validation - CHANGED TO 11 DIGITS
-    document.addEventListener('DOMContentLoaded', function() {
-      const phoneInput = document.getElementById('phone');
+    // PSGC API Integration (Removed hardcoded data)
+    class PSGCAddressAPI {
+      constructor() {
+        this.baseURL = window.location.origin + window.location.pathname;
+        this.cache = {
+          regions: null,
+          provinces: {},
+          cities: {},
+          barangays: {}
+        };
+      }
       
-      // Only allow numbers and limit to 11 digits
-      phoneInput.addEventListener('input', function(e) {
-        // Remove any non-numeric characters
-        let value = e.target.value.replace(/[^0-9]/g, '');
+      async fetchData(endpoint, params = {}) {
+        const url = new URL(this.baseURL);
+        Object.keys(params).forEach(key => {
+          url.searchParams.append(key, params[key]);
+        });
+        url.searchParams.append(endpoint, '1');
         
-        // Limit to 11 digits
-        if (value.length > 11) {
-          value = value.substring(0, 11);
+        try {
+          const response = await fetch(url.toString(), {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          return Array.isArray(data) ? data : [];
+        } catch (error) {
+          console.warn('API fetch failed:', error);
+          return [];
         }
-        
-        e.target.value = value;
-      });
+      }
       
-      // Prevent non-numeric input on keydown
-      phoneInput.addEventListener('keydown', function(e) {
-        // Allow: backspace, delete, tab, escape, enter, and decimal point
-        if ([46, 8, 9, 27, 13, 110, 190].indexOf(e.keyCode) !== -1 ||
-             // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
-             (e.keyCode === 65 && e.ctrlKey === true) || 
-             (e.keyCode === 67 && e.ctrlKey === true) ||
-             (e.keyCode === 86 && e.ctrlKey === true) ||
-             (e.keyCode === 88 && e.ctrlKey === true) ||
-             // Allow: home, end, left, right
-             (e.keyCode >= 35 && e.keyCode <= 39)) {
-          return;
+      async getRegions() {
+        if (this.cache.regions) {
+          return this.cache.regions;
         }
         
-        // Ensure that it is a number and stop the keypress if not
-        if ((e.shiftKey || (e.keyCode < 48 || e.keyCode > 57)) && (e.keyCode < 96 || e.keyCode > 105)) {
-          e.preventDefault();
-        }
-      });
+        const regions = await this.fetchData('getRegions');
+        this.cache.regions = regions;
+        return regions;
+      }
       
-      // Validate on paste
-      phoneInput.addEventListener('paste', function(e) {
-        const pastedData = e.clipboardData.getData('text');
-        if (!/^\d+$/.test(pastedData)) {
-          e.preventDefault();
+      async getProvinces(regionCode) {
+        if (this.cache.provinces[regionCode]) {
+          return this.cache.provinces[regionCode];
         }
-      });
-    });
-
-    // Enhanced File upload functionality for both front and back photos
-    document.addEventListener('DOMContentLoaded', function() {
-      // Front photo upload
-      const fileInputFront = document.getElementById('staff_id_photo_front');
-      const uploadBodyFront = document.getElementById('uploadBodyFront');
-      const fileUploadCardFront = document.getElementById('fileUploadCardFront');
-
-      fileInputFront.addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (file) {
-          // Validate file type
-          const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
-          if (!allowedTypes.includes(file.type)) {
-            alert('Please select a valid image file (JPG, JPEG, PNG, GIF).');
-            fileInputFront.value = '';
-            return;
-          }
-
-          // Validate file size (2MB)
-          const maxSize = 2 * 1024 * 1024; // 2MB in bytes
-          if (file.size > maxSize) {
-            alert('File size must be less than 2MB.');
-            fileInputFront.value = '';
-            return;
-          }
-
-          // Show preview - Replace the upload body content
-          const reader = new FileReader();
-          reader.onload = function(e) {
-            const fileSize = (file.size / 1024 / 1024).toFixed(2);
-            
-            uploadBodyFront.innerHTML = `
-              <div class="file-preview">
-                <img src="${e.target.result}" alt="Front Preview">
-                <div class="file-info">
-                  <div class="file-info-item"><strong>File Name:</strong> ${file.name}</div>
-                  <div class="file-info-item"><strong>File Size:</strong> ${fileSize} MB</div>
-                  <div class="file-info-item"><strong>File Type:</strong> ${file.type}</div>
-                </div>
-                <div class="file-status success">
-                  <i class="fas fa-check-circle"></i> File successfully uploaded
-                </div>
-                <div class="preview-actions">
-                  <button type="button" class="preview-action-btn primary" onclick="document.getElementById('staff_id_photo_front').click()">
-                    <i class="fas fa-sync-alt"></i> Replace
-                  </button>
-                  <button type="button" class="preview-action-btn" onclick="removeImage('front')">
-                    <i class="fas fa-trash"></i> Remove
-                  </button>
-                </div>
-              </div>
-            `;
-            uploadBodyFront.classList.add('has-preview');
-          };
-          reader.readAsDataURL(file);
-        }
-      });
-
-      // Back photo upload
-      const fileInputBack = document.getElementById('staff_id_photo_back');
-      const uploadBodyBack = document.getElementById('uploadBodyBack');
-      const fileUploadCardBack = document.getElementById('fileUploadCardBack');
-
-      fileInputBack.addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (file) {
-          // Validate file type
-          const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
-          if (!allowedTypes.includes(file.type)) {
-            alert('Please select a valid image file (JPG, JPEG, PNG, GIF).');
-            fileInputBack.value = '';
-            return;
-          }
-
-          // Validate file size (2MB)
-          const maxSize = 2 * 1024 * 1024; // 2MB in bytes
-          if (file.size > maxSize) {
-            alert('File size must be less than 2MB.');
-            fileInputBack.value = '';
-            return;
-          }
-
-          // Show preview - Replace the upload body content
-          const reader = new FileReader();
-          reader.onload = function(e) {
-            const fileSize = (file.size / 1024 / 1024).toFixed(2);
-            
-            uploadBodyBack.innerHTML = `
-              <div class="file-preview">
-                <img src="${e.target.result}" alt="Back Preview">
-                <div class="file-info">
-                  <div class="file-info-item"><strong>File Name:</strong> ${file.name}</div>
-                  <div class="file-info-item"><strong>File Size:</strong> ${fileSize} MB</div>
-                  <div class="file-info-item"><strong>File Type:</strong> ${file.type}</div>
-                </div>
-                <div class="file-status success">
-                  <i class="fas fa-check-circle"></i> File successfully uploaded
-                </div>
-                <div class="preview-actions">
-                  <button type="button" class="preview-action-btn primary" onclick="document.getElementById('staff_id_photo_back').click()">
-                    <i class="fas fa-sync-alt"></i> Replace
-                  </button>
-                  <button type="button" class="preview-action-btn" onclick="removeImage('back')">
-                    <i class="fas fa-trash"></i> Remove
-                  </button>
-                </div>
-              </div>
-            `;
-            uploadBodyBack.classList.add('has-preview');
-          };
-          reader.readAsDataURL(file);
-        }
-      });
-
-      // Drag and drop functionality for front photo
-      fileUploadCardFront.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        fileUploadCardFront.classList.add('dragover');
-      });
-
-      fileUploadCardFront.addEventListener('dragleave', function(e) {
-        e.preventDefault();
-        fileUploadCardFront.classList.remove('dragover');
-      });
-
-      fileUploadCardFront.addEventListener('drop', function(e) {
-        e.preventDefault();
-        fileUploadCardFront.classList.remove('dragover');
         
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-          fileInputFront.files = files;
-          fileInputFront.dispatchEvent(new Event('change'));
+        const provinces = await this.fetchData('getProvinces', { regionCode: regionCode });
+        this.cache.provinces[regionCode] = provinces;
+        return provinces;
+      }
+      
+      async getCities(provinceCode) {
+        if (this.cache.cities[provinceCode]) {
+          return this.cache.cities[provinceCode];
         }
-      });
-
-      // Drag and drop functionality for back photo
-      fileUploadCardBack.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        fileUploadCardBack.classList.add('dragover');
-      });
-
-      fileUploadCardBack.addEventListener('dragleave', function(e) {
-        e.preventDefault();
-        fileUploadCardBack.classList.remove('dragover');
-      });
-
-      fileUploadCardBack.addEventListener('drop', function(e) {
-        e.preventDefault();
-        fileUploadCardBack.classList.remove('dragover');
         
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-          fileInputBack.files = files;
-          fileInputBack.dispatchEvent(new Event('change'));
+        const cities = await this.fetchData('getCities', { provinceCode: provinceCode });
+        this.cache.cities[provinceCode] = cities;
+        return cities;
+      }
+      
+      async getBarangays(cityCode) {
+        if (this.cache.barangays[cityCode]) {
+          return this.cache.barangays[cityCode];
         }
-      });
-    });
-
-    // Function to remove uploaded image and restore original state
-    function removeImage(side) {
-      if (side === 'front') {
-        document.getElementById('staff_id_photo_front').value = '';
-        document.getElementById('uploadBodyFront').innerHTML = `
-          <div class="file-upload-text">
-            Upload a clear photo of the front side of your Staff ID showing your photo and details.
-          </div>
-          <label for="staff_id_photo_front" class="file-upload-btn">
-            <i class="fas fa-upload"></i> Choose File
-          </label>
-          <div class="file-requirements">
-            <i class="fas fa-info-circle"></i> Accepted formats: JPG, JPEG, PNG, GIF | Max size: 2MB
-          </div>
-        `;
-        document.getElementById('uploadBodyFront').classList.remove('has-preview');
-      } else if (side === 'back') {
-        document.getElementById('staff_id_photo_back').value = '';
-        document.getElementById('uploadBodyBack').innerHTML = `
-          <div class="file-upload-text">
-            Upload a clear photo of the back side of your Staff ID showing additional details.
-          </div>
-          <label for="staff_id_photo_back" class="file-upload-btn">
-            <i class="fas fa-upload"></i> Choose File
-          </label>
-          <div class="file-requirements">
-            <i class="fas fa-info-circle"></i> Accepted formats: JPG, JPEG, PNG, GIF | Max size: 2MB
-          </div>
-        `;
-        document.getElementById('uploadBodyBack').classList.remove('has-preview');
+        
+        const barangays = await this.fetchData('getBarangays', { cityCode: cityCode });
+        this.cache.barangays[cityCode] = barangays;
+        return barangays;
       }
     }
 
-    // Address dropdown functionality
+    // Form validation
+    class FormValidator {
+      constructor() {
+        this.errors = {};
+      }
+      
+      validateRequired(value, fieldName) {
+        if (!value || value.trim() === '') {
+          this.errors[fieldName] = `${fieldName.replace('_', ' ')} is required`;
+          return false;
+        }
+        return true;
+      }
+      
+      validateEmail(email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (email && !emailRegex.test(email)) {
+          this.errors.email = 'Please enter a valid email address';
+          return false;
+        }
+        return true;
+      }
+      
+      validatePhone(phone) {
+        const phoneRegex = /^[0-9]{11}$/;
+        if (phone && !phoneRegex.test(phone)) {
+          this.errors.phone = 'Phone number must be exactly 11 digits';
+          return false;
+        }
+        return true;
+      }
+      
+      validateFile(file, fieldName) {
+        if (!file || file.size === 0) {
+          this.errors[fieldName] = `${fieldName} is required`;
+          return false;
+        }
+        
+        const maxSize = 2 * 1024 * 1024; // 2MB
+        if (file.size > maxSize) {
+          this.errors[fieldName] = `File size must be less than 2MB`;
+          return false;
+        }
+        
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+        if (!allowedTypes.includes(file.type)) {
+          this.errors[fieldName] = 'Only JPG, JPEG, PNG, and GIF files are allowed';
+          return false;
+        }
+        
+        return true;
+      }
+      
+      clearErrors() {
+        this.errors = {};
+        document.querySelectorAll('.error-message').forEach(el => {
+          el.classList.remove('show');
+          el.textContent = '';
+        });
+        document.querySelectorAll('.form-input, .form-select').forEach(el => {
+          el.classList.remove('error');
+        });
+        document.querySelectorAll('.form-group').forEach(el => {
+          el.classList.remove('has-error');
+        });
+      }
+      
+      showErrors() {
+        for (const [field, message] of Object.entries(this.errors)) {
+          const errorElement = document.getElementById(`${field}_error`);
+          const inputElement = document.getElementById(field) || document.querySelector(`[name="${field}"]`);
+          const formGroup = inputElement ? inputElement.closest('.form-group') : null;
+          
+          if (errorElement) {
+            errorElement.textContent = message;
+            errorElement.classList.add('show');
+          }
+          
+          if (inputElement) {
+            inputElement.classList.add('error');
+          }
+          
+          if (formGroup) {
+            formGroup.classList.add('has-error');
+          }
+        }
+      }
+      
+      isValid() {
+        return Object.keys(this.errors).length === 0;
+      }
+    }
+
+    // Main application
     document.addEventListener('DOMContentLoaded', function() {
+      const addressAPI = new PSGCAddressAPI();
+      const validator = new FormValidator();
+      const form = document.getElementById('staffForm');
+      const submitBtn = document.getElementById('submitBtn');
+      const loadingOverlay = document.getElementById('loadingOverlay');
+      
+      // DOM elements
       const regionSelect = document.getElementById('region');
       const provinceSelect = document.getElementById('province');
       const citySelect = document.getElementById('city');
       const barangaySelect = document.getElementById('barangay');
-
-      regionSelect.addEventListener('change', function() {
-        const selectedRegion = regionSelect.value;
-        provinceSelect.innerHTML = '<option value="">Select Province</option>';
-        if (selectedRegion && regions[selectedRegion]) {
-          regions[selectedRegion].forEach(province => {
-            const option = document.createElement('option');
-            option.value = province;
-            option.textContent = province;
-            provinceSelect.appendChild(option);
-          });
+      const regionLoading = document.getElementById('regionLoading');
+      const provinceLoading = document.getElementById('provinceLoading');
+      const cityLoading = document.getElementById('cityLoading');
+      const barangayLoading = document.getElementById('barangayLoading');
+      
+      // File upload elements
+      const fileInputFront = document.getElementById('staff_id_photo_front');
+      const uploadBodyFront = document.getElementById('uploadBodyFront');
+      const fileUploadCardFront = document.getElementById('fileUploadCardFront');
+      const fileInputBack = document.getElementById('staff_id_photo_back');
+      const uploadBodyBack = document.getElementById('uploadBodyBack');
+      const fileUploadCardBack = document.getElementById('fileUploadCardBack');
+      
+      // Load regions on page load
+      loadRegions();
+      
+      async function loadRegions() {
+        regionLoading.style.display = 'block';
+        try {
+          const regions = await addressAPI.getRegions();
+          regionSelect.innerHTML = '<option value="">Select Region</option>';
+          
+          if (regions.length === 0) {
+            showNotification('Unable to load regions. Please refresh the page.', 'error');
+          } else {
+            regions.forEach(region => {
+              const option = document.createElement('option');
+              option.value = region.name; // Store the name
+              option.setAttribute('data-code', region.code);
+              option.textContent = region.name;
+              regionSelect.appendChild(option);
+            });
+          }
+          
+          regionLoading.style.display = 'none';
+          provinceSelect.disabled = false;
+          setupAddressListeners();
+        } catch (error) {
+          console.error('Error loading regions:', error);
+          regionLoading.style.display = 'none';
+          showNotification('Error loading address data. Please refresh the page.', 'error');
         }
-        // Clear dependent fields
-        citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
-        barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
+      }
+      
+      function setupAddressListeners() {
+        regionSelect.addEventListener('change', async function() {
+          const regionName = this.value;
+          const regionCode = this.options[this.selectedIndex].getAttribute('data-code');
+          
+          if (!regionName || !regionCode) {
+            resetDropdown(provinceSelect, 'Select Province');
+            resetDropdown(citySelect, 'Select City/Municipality');
+            resetDropdown(barangaySelect, 'Select Barangay');
+            return;
+          }
+          
+          provinceLoading.style.display = 'block';
+          provinceSelect.disabled = true;
+          provinceSelect.innerHTML = '<option value="">Select Province</option>';
+          
+          resetDropdown(citySelect, 'Select City/Municipality');
+          resetDropdown(barangaySelect, 'Select Barangay');
+          
+          try {
+            const provinces = await addressAPI.getProvinces(regionCode);
+            provinceSelect.innerHTML = '<option value="">Select Province</option>';
+            
+            if (provinces.length > 0) {
+              provinces.forEach(province => {
+                const option = document.createElement('option');
+                option.value = province.name;
+                option.setAttribute('data-code', province.code);
+                option.textContent = province.name;
+                provinceSelect.appendChild(option);
+              });
+              
+              provinceLoading.style.display = 'none';
+              provinceSelect.disabled = false;
+              
+              if (provinces.length === 1) {
+                provinceSelect.value = provinces[0].name;
+                setTimeout(() => provinceSelect.dispatchEvent(new Event('change')), 100);
+              }
+            } else {
+              provinceLoading.style.display = 'none';
+              provinceSelect.disabled = false;
+              showNotification('No provinces found for this region.', 'warning');
+            }
+          } catch (error) {
+            console.error('Error loading provinces:', error);
+            provinceLoading.style.display = 'none';
+            provinceSelect.disabled = false;
+            showNotification('Error loading provinces', 'error');
+          }
+        });
+        
+        provinceSelect.addEventListener('change', async function() {
+          const provinceName = this.value;
+          const provinceCode = this.options[this.selectedIndex].getAttribute('data-code');
+          
+          if (!provinceName || !provinceCode) {
+            resetDropdown(citySelect, 'Select City/Municipality');
+            resetDropdown(barangaySelect, 'Select Barangay');
+            return;
+          }
+          
+          cityLoading.style.display = 'block';
+          citySelect.disabled = true;
+          citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
+          resetDropdown(barangaySelect, 'Select Barangay');
+          
+          try {
+            const cities = await addressAPI.getCities(provinceCode);
+            citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
+            
+            if (cities.length > 0) {
+              cities.forEach(city => {
+                const option = document.createElement('option');
+                option.value = city.name;
+                option.setAttribute('data-code', city.code);
+                option.textContent = city.name;
+                citySelect.appendChild(option);
+              });
+              
+              cityLoading.style.display = 'none';
+              citySelect.disabled = false;
+              
+              if (cities.length === 1) {
+                citySelect.value = cities[0].name;
+                setTimeout(() => citySelect.dispatchEvent(new Event('change')), 100);
+              }
+            } else {
+              cityLoading.style.display = 'none';
+              citySelect.disabled = false;
+              showNotification('No cities/municipalities found for this province.', 'warning');
+            }
+          } catch (error) {
+            console.error('Error loading cities:', error);
+            cityLoading.style.display = 'none';
+            citySelect.disabled = false;
+            showNotification('Error loading cities', 'error');
+          }
+        });
+        
+        citySelect.addEventListener('change', async function() {
+          const cityName = this.value;
+          const cityCode = this.options[this.selectedIndex].getAttribute('data-code');
+          
+          if (!cityName || !cityCode) {
+            resetDropdown(barangaySelect, 'Select Barangay');
+            return;
+          }
+          
+          barangayLoading.style.display = 'block';
+          barangaySelect.disabled = true;
+          barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
+          
+          try {
+            const barangays = await addressAPI.getBarangays(cityCode);
+            barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
+            
+            if (barangays.length > 0) {
+              barangays.forEach(barangay => {
+                const option = document.createElement('option');
+                option.value = barangay.name;
+                option.textContent = barangay.name;
+                barangaySelect.appendChild(option);
+              });
+              
+              barangayLoading.style.display = 'none';
+              barangaySelect.disabled = false;
+              
+              if (barangays.length === 1) {
+                barangaySelect.value = barangays[0].name;
+              }
+            } else {
+              barangayLoading.style.display = 'none';
+              barangaySelect.disabled = false;
+              showNotification('No barangays found for this city/municipality.', 'warning');
+            }
+          } catch (error) {
+            console.error('Error loading barangays:', error);
+            barangayLoading.style.display = 'none';
+            barangaySelect.disabled = false;
+            showNotification('Error loading barangays', 'error');
+          }
+        });
+      }
+      
+      function resetDropdown(selectElement, placeholder) {
+        selectElement.innerHTML = `<option value="">${placeholder}</option>`;
+        selectElement.disabled = true;
+        selectElement.value = '';
+      }
+      
+      // File upload handlers
+      fileInputFront.addEventListener('change', function(e) {
+        handleFileUpload(e, uploadBodyFront, 'staff_id_photo_front', 'front');
       });
-
-      provinceSelect.addEventListener('change', function() {
-        const selectedProvince = provinceSelect.value;
-        citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
-        if (selectedProvince && provinces[selectedProvince]) {
-          provinces[selectedProvince].forEach(city => {
-            const option = document.createElement('option');
-            option.value = city;
-            option.textContent = city;
-            citySelect.appendChild(option);
-          });
+      
+      fileInputBack.addEventListener('change', function(e) {
+        handleFileUpload(e, uploadBodyBack, 'staff_id_photo_back', 'back');
+      });
+      
+      function handleFileUpload(event, uploadBody, inputId, side) {
+        const file = event.target.files[0];
+        if (file) {
+          const maxSize = 2 * 1024 * 1024; // 2MB
+          const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+          
+          if (!allowedTypes.includes(file.type)) {
+            showNotification('Please select a valid image file (JPG, JPEG, PNG, GIF).', 'error');
+            document.getElementById(inputId).value = '';
+            return;
+          }
+          
+          if (file.size > maxSize) {
+            showNotification('File size must be less than 2MB.', 'error');
+            document.getElementById(inputId).value = '';
+            return;
+          }
+          
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            const fileSize = (file.size / 1024 / 1024).toFixed(2);
+            const fileName = file.name.length > 20 ? file.name.substring(0, 20) + '...' : file.name;
+            
+            uploadBody.innerHTML = `
+              <div class="file-preview">
+                <img src="${e.target.result}" alt="${side} Preview">
+                <div class="file-info">
+                  <div class="file-info-item"><strong>File:</strong> ${fileName}</div>
+                  <div class="file-info-item"><strong>Size:</strong> ${fileSize} MB</div>
+                  <div class="file-info-item"><strong>Type:</strong> ${file.type.split('/')[1].toUpperCase()}</div>
+                </div>
+                <div class="file-status success">
+                  <i class="fas fa-check-circle"></i> File uploaded
+                </div>
+                <div class="preview-actions">
+                  <button type="button" class="preview-action-btn primary" onclick="document.getElementById('${inputId}').click()">
+                    <i class="fas fa-sync-alt"></i> Replace
+                  </button>
+                  <button type="button" class="preview-action-btn" onclick="removeUploadedImage('${inputId}', '${side}')">
+                    <i class="fas fa-trash"></i> Remove
+                  </button>
+                </div>
+              </div>
+            `;
+            uploadBody.classList.add('has-preview');
+          };
+          reader.readAsDataURL(file);
         }
-        // Clear dependent field
-        barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
+      }
+      
+      // Drag and drop
+      [fileUploadCardFront, fileUploadCardBack].forEach((card, index) => {
+        const side = index === 0 ? 'front' : 'back';
+        const inputId = index === 0 ? 'staff_id_photo_front' : 'staff_id_photo_back';
+        
+        card.addEventListener('dragover', function(e) {
+          e.preventDefault();
+          card.classList.add('dragover');
+        });
+        
+        card.addEventListener('dragleave', function(e) {
+          e.preventDefault();
+          card.classList.remove('dragover');
+        });
+        
+        card.addEventListener('drop', function(e) {
+          e.preventDefault();
+          card.classList.remove('dragover');
+          
+          const files = e.dataTransfer.files;
+          if (files.length > 0) {
+            const fileInput = document.getElementById(inputId);
+            fileInput.files = files;
+            fileInput.dispatchEvent(new Event('change'));
+          }
+        });
       });
-
-      citySelect.addEventListener('change', function() {
-        const selectedCity = citySelect.value;
-        barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
-        if (selectedCity && cities[selectedCity]) {
-          cities[selectedCity].forEach(barangay => {
-            const option = document.createElement('option');
-            option.value = barangay;
-            option.textContent = barangay;
-            barangaySelect.appendChild(option);
-          });
+      
+      // Phone number validation
+      const phoneInput = document.getElementById('phone');
+      phoneInput.addEventListener('input', function(e) {
+        let value = e.target.value.replace(/[^0-9]/g, '');
+        if (value.length > 11) {
+          value = value.substring(0, 11);
         }
+        e.target.value = value;
       });
-    });
-
-    // Client-side validation - CHANGED TO 11 DIGITS
-    document.addEventListener('DOMContentLoaded', function() {
-      const form = document.querySelector('form');
-      form.addEventListener('submit', function(e) {
-        const department = document.getElementById('department').value;
-        const position = document.getElementById('position').value;
+      
+      // Form validation
+      form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        validator.clearErrors();
+        
+        // Validate required fields
+        const requiredFields = [
+          'last_name', 'first_name', 'email', 'employee_id', 
+          'department', 'position', 'region', 'province', 'city', 'barangay'
+        ];
+        
+        requiredFields.forEach(field => {
+          const element = document.getElementById(field);
+          if (element) {
+            validator.validateRequired(element.value, field);
+          }
+        });
+        
+        // Validate email
+        const email = document.getElementById('email').value;
+        validator.validateEmail(email);
+        
+        // Validate phone
+        const phone = phoneInput.value;
+        if (phone) {
+          validator.validatePhone(phone);
+        }
+        
+        // Validate files
+        const frontFile = fileInputFront.files[0];
+        const backFile = fileInputBack.files[0];
+        
+        if (frontFile) {
+          validator.validateFile(frontFile, 'staff_id_photo_front');
+        } else {
+          validator.errors.staff_id_photo_front = 'Front photo is required';
+        }
+        
+        if (backFile) {
+          validator.validateFile(backFile, 'staff_id_photo_back');
+        } else {
+          validator.errors.staff_id_photo_back = 'Back photo is required';
+        }
+        
+        // Validate address selections
+        if (regionSelect.value === '') {
+          validator.errors.region = 'Region is required';
+        }
+        if (provinceSelect.value === '') {
+          validator.errors.province = 'Province is required';
+        }
+        if (citySelect.value === '') {
+          validator.errors.city = 'City/Municipality is required';
+        }
+        if (barangaySelect.value === '') {
+          validator.errors.barangay = 'Barangay is required';
+        }
+        
+        // Validate employee ID format
         const employeeId = document.getElementById('employee_id').value;
-        const phone = document.getElementById('phone').value;
-        const lastName = document.getElementById('last_name').value;
-        const firstName = document.getElementById('first_name').value;
-        const region = document.getElementById('region').value;
-        const province = document.getElementById('province').value;
-        const city = document.getElementById('city').value;
-        const barangay = document.getElementById('barangay').value;
-        const staffIdPhotoFront = document.getElementById('staff_id_photo_front').files[0];
-        const staffIdPhotoBack = document.getElementById('staff_id_photo_back').files[0];
-        
         const regexId = /^[A-Za-z0-9\-]+$/;
-        const regexPhone = /^[0-9]{11}$/;
-        
-        if (!lastName || !firstName) {
-          e.preventDefault();
-          alert('Please fill in both Last Name and First Name fields.');
-          return false;
+        if (employeeId && !regexId.test(employeeId)) {
+          validator.errors.employee_id = 'Employee ID contains invalid characters. Only letters, numbers, and hyphens are allowed.';
         }
         
-        if (!department) {
-          e.preventDefault();
-          alert('Please select a department.');
-          return false;
+        if (!validator.isValid()) {
+          validator.showErrors();
+          showNotification('Please correct the errors in the form.', 'error');
+          return;
         }
         
-        if (!position) {
-          e.preventDefault();
-          alert('Please select a position.');
-          return false;
-        }
+        // Show loading overlay
+        showLoading(true);
+        submitBtn.disabled = true;
         
-        if (!regexId.test(employeeId)) {
-          e.preventDefault();
-          alert('Employee ID contains invalid characters. Only letters, numbers, and hyphens are allowed.');
-          return false;
-        }
-        
-        if (phone && !regexPhone.test(phone)) {
-          e.preventDefault();
-          alert('Please enter a valid phone number (exactly 11 digits, numbers only).');
-          return false;
-        }
-        
-        if (!region || !province || !city || !barangay) {
-          e.preventDefault();
-          alert('Please complete all address fields (Region, Province, City/Municipality, and Barangay).');
-          return false;
-        }
-        
-        if (!staffIdPhotoFront) {
-          e.preventDefault();
-          alert('Please upload the front photo of your Staff ID for verification.');
-          return false;
-        }
-        
-        if (!staffIdPhotoBack) {
-          e.preventDefault();
-          alert('Please upload the back photo of your Staff ID for verification.');
-          return false;
+        // Submit form
+        try {
+          // Allow the form to submit normally
+          form.submit();
+        } catch (error) {
+          console.error('Form submission error:', error);
+          showNotification('Error submitting form. Please try again.', 'error');
+          showLoading(false);
+          submitBtn.disabled = false;
         }
       });
+      
+      // Helper functions
+      function showLoading(show) {
+        if (show) {
+          loadingOverlay.style.display = 'flex';
+        } else {
+          loadingOverlay.style.display = 'none';
+        }
+      }
+      
+      function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `alert alert-${type === 'error' ? 'error' : 'success'}`;
+        notification.innerHTML = `
+          <i class="fas fa-${type === 'error' ? 'exclamation-circle' : type === 'warning' ? 'exclamation-triangle' : 'check-circle'}"></i>
+          ${message}
+        `;
+        
+        const content = document.querySelector('.content');
+        content.insertBefore(notification, content.firstChild);
+        
+        setTimeout(() => {
+          notification.remove();
+        }, 5000);
+      }
     });
+    
+    // Global function to remove uploaded image
+    function removeUploadedImage(inputId, side) {
+      const fileInput = document.getElementById(inputId);
+      const uploadBody = document.getElementById(`uploadBody${side.charAt(0).toUpperCase() + side.slice(1)}`);
+      
+      fileInput.value = '';
+      uploadBody.innerHTML = `
+        <div class="file-upload-text">
+          Upload a clear photo of the ${side} side of your Staff ID showing your photo and details.
+        </div>
+        <label for="${inputId}" class="file-upload-btn">
+          <i class="fas fa-upload"></i> Choose File
+        </label>
+        <div class="file-requirements">
+          <i class="fas fa-info-circle"></i> Accepted formats: JPG, JPEG, PNG, GIF | Max size: 2MB
+        </div>
+      `;
+      uploadBody.classList.remove('has-preview');
+    }
   </script>
 </body>
 </html>

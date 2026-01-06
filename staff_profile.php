@@ -2,6 +2,86 @@
 // staff_profile.php
 session_start();
 
+// PSGC API Endpoints
+define('REGIONS_API', 'https://psgc.gitlab.io/api/regions/');
+define('PROVINCES_API', 'https://psgc.gitlab.io/api/regions/{code}/provinces/');
+define('CITIES_API', 'https://psgc.gitlab.io/api/provinces/{code}/cities-municipalities/');
+define('BARANGAYS_API', 'https://psgc.gitlab.io/api/cities-municipalities/{code}/barangays/');
+
+function fetchFromAPI($url) {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($httpCode !== 200) {
+        error_log("PSGC API Error: HTTP $httpCode for URL: $url");
+        return null;
+    }
+    
+    return json_decode($response, true);
+}
+
+function sortByName($a, $b) {
+    return strcmp($a['name'], $b['name']);
+}
+
+// Handle PSGC API requests
+if (isset($_GET['getRegions'])) {
+    header('Content-Type: application/json');
+    $regions = fetchFromAPI(REGIONS_API);
+    if ($regions && is_array($regions)) {
+        usort($regions, 'sortByName');
+        echo json_encode($regions);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+if (isset($_GET['getProvinces']) && isset($_GET['regionCode'])) {
+    header('Content-Type: application/json');
+    $url = str_replace('{code}', $_GET['regionCode'], PROVINCES_API);
+    $provinces = fetchFromAPI($url);
+    if ($provinces && is_array($provinces)) {
+        usort($provinces, 'sortByName');
+        echo json_encode($provinces);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+if (isset($_GET['getCities']) && isset($_GET['provinceCode'])) {
+    header('Content-Type: application/json');
+    $url = str_replace('{code}', $_GET['provinceCode'], CITIES_API);
+    $cities = fetchFromAPI($url);
+    if ($cities && is_array($cities)) {
+        usort($cities, 'sortByName');
+        echo json_encode($cities);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+if (isset($_GET['getBarangays']) && isset($_GET['cityCode'])) {
+    header('Content-Type: application/json');
+    $url = str_replace('{code}', $_GET['cityCode'], BARANGAYS_API);
+    $barangays = fetchFromAPI($url);
+    if ($barangays && is_array($barangays)) {
+        usort($barangays, 'sortByName');
+        echo json_encode($barangays);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
 // Check if user is logged in and is a staff member
 if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'staff') {
     header("Location: index.php");
@@ -65,7 +145,12 @@ try {
             
             // Extract zip code if present
             if (count($address_parts) > 5) {
-                $address_components['zip_code'] = $address_parts[5] ?? '';
+                $zip_part = $address_parts[5] ?? '';
+                if (strpos($zip_part, 'ZIP:') !== false) {
+                    $address_components['zip_code'] = str_replace('ZIP: ', '', $zip_part);
+                } else {
+                    $address_components['zip_code'] = $zip_part;
+                }
             }
         }
     }
@@ -442,7 +527,7 @@ try {
                 $error = "Phone number must be exactly 11 digits.";
             }
             
-            // Address fields
+            // Address fields - IMPORTANT: Store PSGC names
             $region = trim($_POST['region'] ?? '');
             $province = trim($_POST['province'] ?? '');
             $city = trim($_POST['city'] ?? '');
@@ -456,26 +541,16 @@ try {
             // Combine country code and phone number
             $full_phone = $country_code . $phone;
             
-            // Combine address components
-            $permanent_address = "";
-            if (!empty($street_address)) {
-                $permanent_address .= $street_address . ", ";
-            }
-            if (!empty($barangay)) {
-                $permanent_address .= $barangay . ", ";
-            }
-            if (!empty($city)) {
-                $permanent_address .= $city . ", ";
-            }
-            if (!empty($province)) {
-                $permanent_address .= $province . ", ";
-            }
-            if (!empty($region)) {
-                $permanent_address .= $region;
-            }
-            if (!empty($zip_code)) {
-                $permanent_address .= " " . $zip_code;
-            }
+            // Combine address components properly
+            $address_components_new = [];
+            if (!empty($street_address)) $address_components_new[] = $street_address;
+            if (!empty($barangay)) $address_components_new[] = $barangay;
+            if (!empty($city)) $address_components_new[] = $city;
+            if (!empty($province)) $address_components_new[] = $province;
+            if (!empty($region)) $address_components_new[] = $region;
+            if (!empty($zip_code)) $address_components_new[] = "ZIP: " . $zip_code;
+            
+            $permanent_address = implode(', ', $address_components_new);
             
             // Validate inputs
             if (empty($last_name) || empty($first_name) || empty($email)) {
@@ -1609,6 +1684,23 @@ if (!empty($user['staff_id_photo'])) {
       gap: 15px;
     }
     
+    /* Address Loading Spinner */
+    .loading-spinner {
+      display: none;
+      color: var(--primary-color);
+      text-align: center;
+      padding: 10px;
+    }
+    
+    .loading-spinner i {
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
     /* Enhanced Staff ID Photos Section */
     .staff-id-section {
       margin-top: 25px;
@@ -2206,7 +2298,7 @@ if (!empty($user['staff_id_photo'])) {
             <input type="date" id="birthdate" name="birthdate" class="form-control" value="<?= $user['usr_birthdate'] ?>" required>
           </div>
           
-          <!-- Enhanced Address Information Section -->
+          <!-- Enhanced Address Information Section with API -->
           <div class="form-group">
             <label class="form-label">Address Information</label>
             <div class="address-container">
@@ -2214,30 +2306,19 @@ if (!empty($user['staff_id_photo'])) {
                 <label class="form-label" for="region">Region</label>
                 <select id="region" name="region" class="form-control">
                   <option value="">Select Region</option>
-                  <option value="NCR" <?= $address_components['region'] === 'NCR' ? 'selected' : '' ?>>National Capital Region (NCR)</option>
-                  <option value="CAR" <?= $address_components['region'] === 'CAR' ? 'selected' : '' ?>>Cordillera Administrative Region (CAR)</option>
-                  <option value="Region I" <?= $address_components['region'] === 'Region I' ? 'selected' : '' ?>>Region I - Ilocos Region</option>
-                  <option value="Region II" <?= $address_components['region'] === 'Region II' ? 'selected' : '' ?>>Region II - Cagayan Valley</option>
-                  <option value="Region III" <?= $address_components['region'] === 'Region III' ? 'selected' : '' ?>>Region III - Central Luzon</option>
-                  <option value="Region IV-A" <?= $address_components['region'] === 'Region IV-A' ? 'selected' : '' ?>>Region IV-A - CALABARZON</option>
-                  <option value="Region IV-B" <?= $address_components['region'] === 'Region IV-B' ? 'selected' : '' ?>>Region IV-B - MIMAROPA</option>
-                  <option value="Region V" <?= $address_components['region'] === 'Region V' ? 'selected' : '' ?>>Region V - Bicol Region</option>
-                  <option value="Region VI" <?= $address_components['region'] === 'Region VI' ? 'selected' : '' ?>>Region VI - Western Visayas</option>
-                  <option value="Region VII" <?= $address_components['region'] === 'Region VII' ? 'selected' : '' ?>>Region VII - Central Visayas</option>
-                  <option value="Region VIII" <?= $address_components['region'] === 'Region VIII' ? 'selected' : '' ?>>Region VIII - Eastern Visayas</option>
-                  <option value="Region IX" <?= $address_components['region'] === 'Region IX' ? 'selected' : '' ?>>Region IX - Zamboanga Peninsula</option>
-                  <option value="Region X" <?= $address_components['region'] === 'Region X' ? 'selected' : '' ?>>Region X - Northern Mindanao</option>
-                  <option value="Region XI" <?= $address_components['region'] === 'Region XI' ? 'selected' : '' ?>>Region XI - Davao Region</option>
-                  <option value="Region XII" <?= $address_components['region'] === 'Region XII' ? 'selected' : '' ?>>Region XII - SOCCSKSARGEN</option>
-                  <option value="Region XIII" <?= $address_components['region'] === 'Region XIII' ? 'selected' : '' ?>>Region XIII - Caraga</option>
-                  <option value="BARMM" <?= $address_components['region'] === 'BARMM' ? 'selected' : '' ?>>Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)</option>
                 </select>
+                <div class="loading-spinner" id="regionLoading">
+                  <i class="fas fa-spinner"></i> Loading regions...
+                </div>
               </div>
               <div>
                 <label class="form-label" for="province">Province</label>
-                <select id="province" name="province" class="form-control">
+                <select id="province" name="province" class="form-control" disabled>
                   <option value="">Select Province</option>
                 </select>
+                <div class="loading-spinner" id="provinceLoading" style="display: none;">
+                  <i class="fas fa-spinner"></i> Loading provinces...
+                </div>
               </div>
             </div>
           </div>
@@ -2246,15 +2327,21 @@ if (!empty($user['staff_id_photo'])) {
             <div class="address-container">
               <div>
                 <label class="form-label" for="city">City/Municipality</label>
-                <select id="city" name="city" class="form-control">
+                <select id="city" name="city" class="form-control" disabled>
                   <option value="">Select City/Municipality</option>
                 </select>
+                <div class="loading-spinner" id="cityLoading" style="display: none;">
+                  <i class="fas fa-spinner"></i> Loading cities...
+                </div>
               </div>
               <div>
                 <label class="form-label" for="barangay">Barangay</label>
-                <select id="barangay" name="barangay" class="form-control">
+                <select id="barangay" name="barangay" class="form-control" disabled>
                   <option value="">Select Barangay</option>
                 </select>
+                <div class="loading-spinner" id="barangayLoading" style="display: none;">
+                  <i class="fas fa-spinner"></i> Loading barangays...
+                </div>
               </div>
             </div>
           </div>
@@ -2310,291 +2397,497 @@ if (!empty($user['staff_id_photo'])) {
   </div>
 
   <script>
-    // Comprehensive Philippine Address Data
-    const regions = {
-      "NCR": ["Metro Manila"],
-      "CAR": ["Abra", "Apayao", "Benguet", "Ifugao", "Kalinga", "Mountain Province"],
-      "Region I": ["Ilocos Norte", "Ilocos Sur", "La Union", "Pangasinan"],
-      "Region II": ["Batanes", "Cagayan", "Isabela", "Nueva Vizcaya", "Quirino"],
-      "Region III": ["Aurora", "Bataan", "Bulacan", "Nueva Ecija", "Pampanga", "Tarlac", "Zambales"],
-      "Region IV-A": ["Batangas", "Cavite", "Laguna", "Quezon", "Rizal"],
-      "Region IV-B": ["Marinduque", "Occidental Mindoro", "Oriental Mindoro", "Palawan", "Romblon"],
-      "Region V": ["Albay", "Camarines Norte", "Camarines Sur", "Catanduanes", "Masbate", "Sorsogon"],
-      "Region VI": ["Aklan", "Antique", "Capiz", "Guimaras", "Iloilo", "Negros Occidental"],
-      "Region VII": ["Bohol", "Cebu", "Negros Oriental", "Siquijor"],
-      "Region VIII": ["Biliran", "Eastern Samar", "Leyte", "Northern Samar", "Samar", "Southern Leyte"],
-      "Region IX": ["Zamboanga del Norte", "Zamboanga del Sur", "Zamboanga Sibugay"],
-      "Region X": ["Bukidnon", "Camiguin", "Lanao del Norte", "Misamis Occidental", "Misamis Oriental"],
-      "Region XI": ["Davao de Oro", "Davao del Norte", "Davao del Sur", "Davao Occidental", "Davao Oriental"],
-      "Region XII": ["Cotabato", "Sarangani", "South Cotabato", "Sultan Kudarat"],
-      "Region XIII": ["Agusan del Norte", "Agusan del Sur", "Dinagat Islands", "Surigao del Norte", "Surigao del Sur"],
-      "BARMM": ["Basilan", "Lanao del Sur", "Maguindanao", "Sulu", "Tawi-Tawi"]
-    };
-
-    const provinces = {
-      "Metro Manila": ["Manila", "Quezon City", "Caloocan", "Las Piñas", "Makati", "Malabon", "Mandaluyong", "Marikina", "Muntinlupa", "Navotas", "Parañaque", "Pasay", "Pasig", "Pateros", "San Juan", "Taguig", "Valenzuela"],
-      "Pampanga": ["Angeles City", "San Fernando", "Mabalacat", "Arayat", "Santa Ana", "Magalang", "Mexico", "Floridablanca", "Lubao", "Guagua", "Apalit", "Candaba", "Macabebe", "Masantol", "San Luis", "San Simon", "Santo Tomas", "Sasmuan"],
-      "Cebu": ["Cebu City", "Mandaue City", "Lapu-Lapu City", "Talisay City", "Toledo City", "Danao City", "Naga City", "Carcar City", "Bogo City", "Cordova", "Compostela", "Liloan", "Minglanilla", "San Fernando", "San Remigio"],
-      "Bohol": ["Tagbilaran City", "Carmen", "Dauis", "Panglao", "Corella", "Sikatuna", "Baclayon", "Alburquerque", "Loay", "Loboc", "Antequera", "Balilihan", "Calape", "Catigbian", "Clarin", "Cortes", "Dimiao", "Garcia Hernandez"],
-      "Negros Oriental": ["Dumaguete City", "Bais City", "Bayawan City", "Tanjay City", "Guihulngan City", "Valencia", "Sibulan", "Bacong", "Dauin", "Zamboanguita", "Amlan", "Ayungon", "Bindoy", "Dumaguete", "Jimalalud", "La Libertad", "Mabinay", "Manjuyod"],
-      "Ilocos Norte": ["Laoag City", "Batac City", "Paoay", "Vintar", "Bacarra", "Sarrat", "San Nicolas", "Badoc", "Pinili", "Currimao", "Banna", "Burgos", "Carasi", "Dingras", "Dumalneg", "Marcos", "Nueva Era", "Pagudpud"],
-      "Ilocos Sur": ["Vigan City", "Candon City", "Narvacan", "Santa Maria", "Santa Catalina", "Santiago", "San Esteban", "Caoayan", "Santa", "Magsingal", "Banayoyo", "Bantay", "Burgos", "Cabugao", "Cervantes", "Galimuyod", "Gregorio del Pilar", "Lidlidda"],
-      "La Union": ["San Fernando City", "Bauang", "Agoo", "Aringay", "Bacnotan", "Naguilian", "Tubao", "Rosario", "Santo Tomas", "Caba", "Bagulin", "Balaoan", "Bangar", "Burgos", "Luna", "Pugo", "San Gabriel", "Sudipen"],
-      "Pangasinan": ["Dagupan City", "San Carlos City", "Urdaneta City", "Lingayen", "Calasiao", "Mangaldan", "Binmaley", "Manaoag", "Bayambang", "Alaminos City", "Anda", "Asingan", "Balungao", "Bani", "Basista", "Bautista", "Binalonan", "Bolinao"],
-      "Bataan": ["Balanga City", "Mariveles", "Dinalupihan", "Orani", "Samal", "Abucay", "Pilar", "Bagac", "Morong", "Limay", "Hermosa", "Orion"],
-      "Bulacan": ["Malolos", "Meycauayan", "San Jose del Monte", "Santa Maria", "Marilao", "Bocaue", "Guiguinto", "Plaridel", "Pulilan", "Calumpit", "Balagtas", "Baliwag", "Bustos", "Hagonoy", "Obando", "Pandi", "Paombong", "San Ildefonso"],
-      "Nueva Ecija": ["Cabanatuan City", "Palayan City", "Gapan City", "San Jose City", "Science City of Muñoz", "Santa Rosa", "Peñaranda", "Lupao", "Talavera", "Rizal", "Aliaga", "Bongabon", "Cabiao", "Carranglan", "Cuyapo", "Gabaldon", "General Mamerto Natividad", "General Tinio"],
-      "Tarlac": ["Tarlac City", "Concepcion", "Capas", "Bamban", "Paniqui", "Camiling", "Moncada", "Gerona", "Victoria", "San Manuel", "Anao", "La Paz", "Mayantoc", "Pura", "Ramos", "San Clemente", "Santa Ignacia"],
-      "Zambales": ["Olongapo City", "Subic", "Iba", "Botolan", "Castillejos", "San Marcelino", "San Antonio", "San Felipe", "Cabangan", "Palauig", "Candelaria", "Masinloc", "Sta. Cruz"],
-      "Batangas": ["Batangas City", "Lipa City", "Tanauan City", "Santo Tomas", "Bauan", "Nasugbu", "Calaca", "Balayan", "Lian", "Taal", "Alitagtag", "Balete", "Cuenca", "Ibaan", "Laurel", "Lemery", "Malvar", "Mataasnakahoy"],
-      "Cavite": ["Dasmarinas", "Bacoor", "Imus", "Tagaytay City", "General Trias", "Trece Martires City", "Silang", "Kawit", "Noveleta", "Rosario", "Alfonso", "Amadeo", "Carmona", "Gen. Mariano Alvarez", "Indang", "Magallanes", "Maragondon", "Mendez"],
-      "Laguna": ["Calamba City", "Santa Rosa City", "San Pablo City", "Biñan", "Cabuyao", "San Pedro", "Los Baños", "Sta. Cruz", "Nagcarlan", "Liliw", "Alaminos", "Bay", "Calauan", "Cavinti", "Famy", "Kalayaan", "Luisiana", "Lumban"],
-      "Rizal": ["Antipolo City", "Taytay", "Cainta", "Binangonan", "Angono", "Rodriguez", "San Mateo", "Baras", "Tanay", "Pililla", "Cardona", "Jalajala", "Morong", "Teresa"],
-      "Quezon": ["Lucena City", "Tayabas", "Candelaria", "Sariaya", "Gumaca", "Lopez", "Atimonan", "Mauban", "Infanta", "Real", "Agdangan", "Alabat", "Buenavista", "Burdeos", "Calauag", "Gen. Luna", "Gen. Nakar", "Guinayangan"],
-      "Albay": ["Legazpi City", "Ligao City", "Tabaco City", "Daraga", "Guinobatan", "Camalig", "Polangui", "Oas", "Libon", "Malilipot", "Bacacay", "Malinao", "Sto. Domingo", "Rapu-Rapu", "Jovellar", "Pio Duran"],
-      "Camarines Sur": ["Naga City", "Iriga City", "Pili", "Calabanga", "Libmanan", "Nabua", "Buhi", "Baao", "Bula", "Bato", "Bombon", "Cabusao", "Caramoan", "Del Gallego", "Gainza", "Garchitorena", "Lagonoy", "Magarao"]
-    };
-
-    const cities = {
-      "Cebu City": ["Sambag I", "Sambag II", "Capitol Site", "Kamputhaw", "Luz", "Ermita", "Mabolo", "Talamban", "Tisa", "Labangon", "Banilad", "Basak Pardo", "Bulacao", "Busay", "Calamba", "Cogon Pardo", "Guadalupe"],
-      "Mandaue City": ["Alang-alang", "Bakilid", "Pakna-an", "Basak", "Labogon", "Banilad", "Cabancalan", "Casili", "Casuntingan", "Centro", "Cubacub", "Guizo", "Ibabao-Estancia", "Jagobiao", "Looc", "Maguikay", "Opao"],
-      "Lapu-Lapu City": ["Agus", "Babag", "Bankal", "Baring", "Basak", "Buaya", "Calawisan", "Canjulao", "Caw-oy", "Cawhagan", "Gun-ob", "Ibo", "Looc", "Mactan", "Maribago", "Marigondon", "Pajac", "Pajo", "Pangan-an", "Pusok", "Sabang", "Santa Rosa", "Subabasbas", "Tingo"],
-      "Talisay City": ["Biasong", "Bulacao", "Cansojong", "Camp IV", "Dumlog", "Jaclupan", "Lagtang", "Lawaan I", "Lawaan II", "Lawaan III", "Linao", "Maghaway", "Manipis", "Mohon", "Poblacion", "Pooc", "San Isidro", "San Roque", "Tabunoc", "Tangke"],
-      "Toledo City": ["Awihao", "Bagakay", "Bato", "Biga", "Bulongan", "Bunga", "Cantabaco", "Capitol", "Carmen", "Daanglungsod", "Don Andres Soriano", "Dumlog", "Ilihan", "Landahan", "Loay", "Luray II", "Matab-ang", "Media Once", "Pangamihan", "Poblacion", "Poog", "Putingbato", "Sagay", "Sam-ang", "Sangi", "Sto. Niño", "Subayon", "Talavera", "Tungkay"],
-      "Danao City": ["Baliang", "Bayabas", "Binaliw", "Cabalawan", "Cagat-Lamac", "Cahumayan", "Cambanay", "Cambubho", "Cogon-Cruz", "Danasan", "Dungga", "Dunggoan", "Guinacot", "Guinsay", "Ibo", "Langosig", "Lawaan", "Licolico", "Looc", "Magtagobtob", "Malapoc", "Manlayag", "Mantija", "Mercado", "Oguis", "Pili", "Poblacion", "Quisol", "Sabang", "Sacsac", "Sandayong", "Santa Rosa", "Santican", "Sibacan", "Suba", "Taboc", "Taytay", "Togonon", "Tuburan Sur"],
-      "Naga City": ["Alang-alang", "Balirong", "Bairan", "Bascaran", "Cabolawan", "Cantao-an", "Central Poblacion", "Cogon", "Colon", "East Poblacion", "Inoburan", "Inayagan", "Jaguimit", "Lanas", "Langtad", "Lutac", "Mainit", "Mayana", "Naalad", "North Poblacion", "Pangdan", "Patag", "South Poblacion", "Tagnocon", "Tangke", "Tinaan", "Uling", "West Poblacion"],
-      "Carcar City": ["Bolinawan", "Buenavista", "Calidngan", "Can-asujan", "Guadalupe", "Liburon", "Napo", "Ocana", "Perrelos", "Poblacion I", "Poblacion II", "Poblacion III", "Tuyom", "Valladolid"],
-      "Bogo City": ["Anonang Norte", "Anonang Sur", "Banban", "Binabag", "Campusong", "Cantagay", "Cayang", "Dakit", "Don Pedro Rodriguez", "Gairan", "Guadalupe", "La Paz", "La Purisima Concepcion", "Libertad", "Lourdes", "Malingin", "Marangog", "Nailon", "Odlot", "Pandan", "Polambato", "Sambag", "San Vicente", "Santa Cruz", "Sibongan", "Sulangan", "Taytayan", "Yati"],
-      "Cordova": ["Alegria", "Bangbang", "Buagsong", "Catarman", "Cogon", "Dapitan", "Day-as", "Gabriela", "Gilutongan", "Ibabao", "Pilipog", "Poblacion", "San Miguel"],
-      "Compostela": ["Bagalnga", "Basak", "Buluang", "Cabadiangan", "Cambayog", "Canamucan", "Cogon", "Dapdap", "Estaca", "Lagundi", "Mulao", "Panangban", "Poblacion", "Tag-ube", "Tamiao"],
-      "Liloan": ["Cabadiangan", "Calero", "Catarman", "Cotcot", "Jubay", "Lataban", "Mulao", "Poblacion", "San Roque", "San Vicente", "Santa Cruz", "Tabla", "Tayud", "Yati"],
-      "Minglanilla": ["Cadulawan", "Calajo-an", "Camp 7", "Camp 8", "Cuanos", "Guindaruhan", "Linao", "Mangoto", "Pakigne", "Poblacion Ward I", "Poblacion Ward II", "Poblacion Ward III", "Tubod", "Tulay", "Tungkop", "Tungkil", "Tungkop", "Vito"],
-      "San Fernando": ["Balud", "Balungag", "Basak", "Bugho", "Cabatbatan", "Greenhills", "Ilaya", "Lantawan", "Liburon", "Magsico", "Panadtaran", "Poblacion North", "Poblacion South", "San Isidro", "Sangat", "Tabionan", "Tananas", "Tinaan", "Tonggo"],
-      "San Remigio": ["Anapog", "Argawanon", "Bagtic", "Bancasan", "Batad", "Busogon", "Calambua", "Canagahan", "Dapdap", "Gawaygaway", "Hagnaya", "Kayam", "Kinawahan", "Lamintak", "Lawis", "Luyang", "Mancilang", "Poblacion", "Punao", "Sab-a", "San Miguel", "Tambongon", "To-ong", "Victoria"]
-    };
-
-    const barangays = {
-      "Alang-alang": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Bakilid": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pakna-an": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Basak": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Labogon": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Banilad": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cabancalan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Casili": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Casuntingan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Centro": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cubacub": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Guizo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Ibabao-Estancia": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Jagobiao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Looc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Maguikay": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Opao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Agus": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Babag": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Bankal": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Baring": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Basak": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Buaya": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Calawisan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Canjulao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Caw-oy": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cawhagan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Gun-ob": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Ibo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Looc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Mactan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Maribago": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Marigondon": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pajac": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pajo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pangan-an": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pusok": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Sabang": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Santa Rosa": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Subabasbas": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Tingo": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Biasong": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Bulacao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Cansojong": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Camp IV": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Dumlog": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Jaclupan": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lagtang": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lawaan I": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lawaan II": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Lawaan III": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Linao": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Maghaway": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Manipis": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Mohon": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Poblacion": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Pooc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "San Isidro": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "San Roque": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Tabunoc": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"],
-      "Tangke": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"]
-    };
-
-    // Common Dropdown Functionality
-    const notification = document.getElementById('notification');
-    const notificationDropdown = document.getElementById('notificationDropdown');
-    const staffProfile = document.getElementById('staffProfile');
-    const profileDropdown = document.getElementById('profileDropdown');
-    
-    notification.addEventListener('click', function(e) {
-      e.stopPropagation();
-      notificationDropdown.classList.toggle('active');
-      profileDropdown.classList.remove('active');
-    });
-    
-    staffProfile.addEventListener('click', function(e) {
-      e.stopPropagation();
-      profileDropdown.classList.toggle('active');
-      notificationDropdown.classList.remove('active');
-    });
-    
-    document.addEventListener('click', function() {
-      notificationDropdown.classList.remove('active');
-      profileDropdown.classList.remove('active');
-    });
-    
-    notificationDropdown.addEventListener('click', function(e) {
-      e.stopPropagation();
-    });
-    
-    profileDropdown.addEventListener('click', function(e) {
-      e.stopPropagation();
-    });
-    
-    // File input display functionality
-    document.querySelectorAll('.file-input').forEach(input => {
-      const fileNameElement = document.getElementById(input.id + '_name');
+    // PSGC API Integration (Removed hardcoded data)
+    class PSGCAddressAPI {
+      constructor() {
+        this.baseURL = window.location.origin + window.location.pathname;
+        this.cache = {
+          regions: null,
+          provinces: {},
+          cities: {},
+          barangays: {}
+        };
+      }
       
-      input.addEventListener('change', function() {
-        if (this.files.length > 0) {
-          fileNameElement.textContent = this.files[0].name;
-          
-          // Preview profile photo
-          if (this.id === 'profile_photo' && this.files[0]) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-              // Show cropper modal instead of directly updating the preview
-              showCropperModal(e.target.result);
+      async fetchData(endpoint, params = {}) {
+        const url = new URL(this.baseURL);
+        Object.keys(params).forEach(key => {
+          url.searchParams.append(key, params[key]);
+        });
+        url.searchParams.append(endpoint, '1');
+        
+        try {
+          const response = await fetch(url.toString(), {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json'
             }
-            reader.readAsDataURL(this.files[0]);
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
           }
-        } else {
-          fileNameElement.textContent = 'No file chosen';
+          
+          const data = await response.json();
+          return Array.isArray(data) ? data : [];
+        } catch (error) {
+          console.warn('API fetch failed:', error);
+          return [];
         }
-      });
-    });
-    
-    // Cropper functionality
-    let cropper;
-    const cropperModal = document.getElementById('cropperModal');
-    const imageToCrop = document.getElementById('imageToCrop');
-    const closeCropperModal = document.getElementById('closeCropperModal');
-    const cancelCrop = document.getElementById('cancelCrop');
-    const saveCrop = document.getElementById('saveCrop');
-    const croppedImageData = document.getElementById('cropped_image_data');
-    const profilePhotoPreview = document.getElementById('profilePhotoPreview');
-    const sidebarAvatar = document.getElementById('sidebarAvatar');
-    const topNavAvatar = document.getElementById('topNavAvatar');
-    
-    function showCropperModal(imageSrc) {
-      imageToCrop.src = imageSrc;
-      cropperModal.style.display = 'flex';
-      
-      // Initialize cropper
-      if (cropper) {
-        cropper.destroy();
       }
       
-      cropper = new Cropper(imageToCrop, {
-        aspectRatio: 1,
-        viewMode: 1,
-        preview: '.cropper-preview',
-        guides: true,
-        background: false,
-        movable: true,
-        rotatable: true,
-        scalable: true,
-        zoomable: true,
-        zoomOnTouch: true,
-        zoomOnWheel: true,
-        wheelZoomRatio: 0.1,
-        cropBoxMovable: true,
-        cropBoxResizable: true,
-        toggleDragModeOnDblclick: true,
-        minContainerWidth: 300,
-        minContainerHeight: 300,
-        responsive: true,
-        restore: true,
-        checkCrossOrigin: false,
-        checkOrientation: false,
-        modal: true,
-        highlight: false,
-        center: true,
-        autoCropArea: 0.8
-      });
-    }
-    
-    function hideCropperModal() {
-      cropperModal.style.display = 'none';
-      if (cropper) {
-        cropper.destroy();
-        cropper = null;
+      async getRegions() {
+        if (this.cache.regions) {
+          return this.cache.regions;
+        }
+        
+        const regions = await this.fetchData('getRegions');
+        this.cache.regions = regions;
+        return regions;
+      }
+      
+      async getProvinces(regionCode) {
+        if (this.cache.provinces[regionCode]) {
+          return this.cache.provinces[regionCode];
+        }
+        
+        const provinces = await this.fetchData('getProvinces', { regionCode: regionCode });
+        this.cache.provinces[regionCode] = provinces;
+        return provinces;
+      }
+      
+      async getCities(provinceCode) {
+        if (this.cache.cities[provinceCode]) {
+          return this.cache.cities[provinceCode];
+        }
+        
+        const cities = await this.fetchData('getCities', { provinceCode: provinceCode });
+        this.cache.cities[provinceCode] = cities;
+        return cities;
+      }
+      
+      async getBarangays(cityCode) {
+        if (this.cache.barangays[cityCode]) {
+          return this.cache.barangays[cityCode];
+        }
+        
+        const barangays = await this.fetchData('getBarangays', { cityCode: cityCode });
+        this.cache.barangays[cityCode] = barangays;
+        return barangays;
       }
     }
-    
-    closeCropperModal.addEventListener('click', hideCropperModal);
-    cancelCrop.addEventListener('click', hideCropperModal);
-    
-    saveCrop.addEventListener('click', function() {
-      if (cropper) {
-        // Get cropped canvas
-        const canvas = cropper.getCroppedCanvas({
-          width: 300,
-          height: 300,
-          fillColor: '#fff',
-          imageSmoothingEnabled: true,
-          imageSmoothingQuality: 'high'
+
+    // Main application
+    document.addEventListener('DOMContentLoaded', function() {
+      const addressAPI = new PSGCAddressAPI();
+      
+      // DOM elements
+      const regionSelect = document.getElementById('region');
+      const provinceSelect = document.getElementById('province');
+      const citySelect = document.getElementById('city');
+      const barangaySelect = document.getElementById('barangay');
+      const regionLoading = document.getElementById('regionLoading');
+      const provinceLoading = document.getElementById('provinceLoading');
+      const cityLoading = document.getElementById('cityLoading');
+      const barangayLoading = document.getElementById('barangayLoading');
+      
+      // Load regions on page load
+      loadRegions();
+      
+      async function loadRegions() {
+        regionLoading.style.display = 'block';
+        try {
+          const regions = await addressAPI.getRegions();
+          regionSelect.innerHTML = '<option value="">Select Region</option>';
+          
+          if (regions.length === 0) {
+            showNotification('Unable to load regions. Please refresh the page.', 'error');
+          } else {
+            // Add current region if exists
+            const currentRegion = "<?= addslashes($address_components['region']) ?>";
+            let currentRegionFound = false;
+            
+            regions.forEach(region => {
+              const option = document.createElement('option');
+              option.value = region.name;
+              option.setAttribute('data-code', region.code);
+              option.textContent = region.name;
+              
+              if (region.name === currentRegion) {
+                option.selected = true;
+                currentRegionFound = true;
+              }
+              
+              regionSelect.appendChild(option);
+            });
+            
+            // If current region exists, load its provinces
+            if (currentRegionFound && currentRegion) {
+              const selectedOption = regionSelect.querySelector(`option[value="${currentRegion}"]`);
+              if (selectedOption) {
+                const regionCode = selectedOption.getAttribute('data-code');
+                setTimeout(() => loadProvinces(regionCode, "<?= addslashes($address_components['province']) ?>"), 100);
+              }
+            }
+          }
+          
+          regionLoading.style.display = 'none';
+          provinceSelect.disabled = false;
+          setupAddressListeners();
+        } catch (error) {
+          console.error('Error loading regions:', error);
+          regionLoading.style.display = 'none';
+          showNotification('Error loading address data. Please refresh the page.', 'error');
+        }
+      }
+      
+      async function loadProvinces(regionCode, currentProvince = '') {
+        provinceLoading.style.display = 'block';
+        provinceSelect.disabled = true;
+        provinceSelect.innerHTML = '<option value="">Select Province</option>';
+        
+        resetDropdown(citySelect, 'Select City/Municipality');
+        resetDropdown(barangaySelect, 'Select Barangay');
+        
+        try {
+          const provinces = await addressAPI.getProvinces(regionCode);
+          provinceSelect.innerHTML = '<option value="">Select Province</option>';
+          
+          if (provinces.length > 0) {
+            provinces.forEach(province => {
+              const option = document.createElement('option');
+              option.value = province.name;
+              option.setAttribute('data-code', province.code);
+              option.textContent = province.name;
+              
+              if (province.name === currentProvince) {
+                option.selected = true;
+              }
+              
+              provinceSelect.appendChild(option);
+            });
+            
+            provinceLoading.style.display = 'none';
+            provinceSelect.disabled = false;
+            
+            // If current province exists, load its cities
+            if (currentProvince && provinceSelect.value) {
+              const selectedOption = provinceSelect.querySelector(`option[value="${currentProvince}"]`);
+              if (selectedOption) {
+                const provinceCode = selectedOption.getAttribute('data-code');
+                setTimeout(() => loadCities(provinceCode, "<?= addslashes($address_components['city']) ?>"), 100);
+              }
+            }
+            
+            if (provinces.length === 1 && !currentProvince) {
+              provinceSelect.value = provinces[0].name;
+              setTimeout(() => provinceSelect.dispatchEvent(new Event('change')), 100);
+            }
+          } else {
+            provinceLoading.style.display = 'none';
+            provinceSelect.disabled = false;
+          }
+        } catch (error) {
+          console.error('Error loading provinces:', error);
+          provinceLoading.style.display = 'none';
+          provinceSelect.disabled = false;
+        }
+      }
+      
+      async function loadCities(provinceCode, currentCity = '') {
+        cityLoading.style.display = 'block';
+        citySelect.disabled = true;
+        citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
+        resetDropdown(barangaySelect, 'Select Barangay');
+        
+        try {
+          const cities = await addressAPI.getCities(provinceCode);
+          citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
+          
+          if (cities.length > 0) {
+            cities.forEach(city => {
+              const option = document.createElement('option');
+              option.value = city.name;
+              option.setAttribute('data-code', city.code);
+              option.textContent = city.name;
+              
+              if (city.name === currentCity) {
+                option.selected = true;
+              }
+              
+              citySelect.appendChild(option);
+            });
+            
+            cityLoading.style.display = 'none';
+            citySelect.disabled = false;
+            
+            // If current city exists, load its barangays
+            if (currentCity && citySelect.value) {
+              const selectedOption = citySelect.querySelector(`option[value="${currentCity}"]`);
+              if (selectedOption) {
+                const cityCode = selectedOption.getAttribute('data-code');
+                setTimeout(() => loadBarangays(cityCode, "<?= addslashes($address_components['barangay']) ?>"), 100);
+              }
+            }
+            
+            if (cities.length === 1 && !currentCity) {
+              citySelect.value = cities[0].name;
+              setTimeout(() => citySelect.dispatchEvent(new Event('change')), 100);
+            }
+          } else {
+            cityLoading.style.display = 'none';
+            citySelect.disabled = false;
+          }
+        } catch (error) {
+          console.error('Error loading cities:', error);
+          cityLoading.style.display = 'none';
+          citySelect.disabled = false;
+        }
+      }
+      
+      async function loadBarangays(cityCode, currentBarangay = '') {
+        barangayLoading.style.display = 'block';
+        barangaySelect.disabled = true;
+        barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
+        
+        try {
+          const barangays = await addressAPI.getBarangays(cityCode);
+          barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
+          
+          if (barangays.length > 0) {
+            barangays.forEach(barangay => {
+              const option = document.createElement('option');
+              option.value = barangay.name;
+              option.textContent = barangay.name;
+              
+              if (barangay.name === currentBarangay) {
+                option.selected = true;
+              }
+              
+              barangaySelect.appendChild(option);
+            });
+            
+            barangayLoading.style.display = 'none';
+            barangaySelect.disabled = false;
+            
+            if (barangays.length === 1 && !currentBarangay) {
+              barangaySelect.value = barangays[0].name;
+            }
+          } else {
+            barangayLoading.style.display = 'none';
+            barangaySelect.disabled = false;
+          }
+        } catch (error) {
+          console.error('Error loading barangays:', error);
+          barangayLoading.style.display = 'none';
+          barangaySelect.disabled = false;
+        }
+      }
+      
+      function setupAddressListeners() {
+        regionSelect.addEventListener('change', async function() {
+          const regionName = this.value;
+          const regionCode = this.options[this.selectedIndex].getAttribute('data-code');
+          
+          if (!regionName || !regionCode) {
+            resetDropdown(provinceSelect, 'Select Province');
+            resetDropdown(citySelect, 'Select City/Municipality');
+            resetDropdown(barangaySelect, 'Select Barangay');
+            return;
+          }
+          
+          loadProvinces(regionCode);
         });
         
-        // Convert canvas to base64 data URL
-        const croppedImageUrl = canvas.toDataURL('image/png');
+        provinceSelect.addEventListener('change', async function() {
+          const provinceName = this.value;
+          const provinceCode = this.options[this.selectedIndex].getAttribute('data-code');
+          
+          if (!provinceName || !provinceCode) {
+            resetDropdown(citySelect, 'Select City/Municipality');
+            resetDropdown(barangaySelect, 'Select Barangay');
+            return;
+          }
+          
+          loadCities(provinceCode);
+        });
         
-        // Update profile photo previews
-        profilePhotoPreview.src = croppedImageUrl;
-        sidebarAvatar.src = croppedImageUrl;
-        topNavAvatar.src = croppedImageUrl;
-        
-        // Set cropped image data to hidden field
-        croppedImageData.value = croppedImageUrl;
-        
-        // Hide modal
-        hideCropperModal();
-        
-        // Clear the file input to allow re-uploading the same file
-        document.getElementById('profile_photo').value = '';
-        document.getElementById('profile_photo_name').textContent = 'No file chosen';
-        
-        // Submit the form to save the cropped image
-        document.getElementById('profileForm').submit();
+        citySelect.addEventListener('change', async function() {
+          const cityName = this.value;
+          const cityCode = this.options[this.selectedIndex].getAttribute('data-code');
+          
+          if (!cityName || !cityCode) {
+            resetDropdown(barangaySelect, 'Select Barangay');
+            return;
+          }
+          
+          loadBarangays(cityCode);
+        });
       }
-    });
-    
-    // Close modal when clicking outside
-    window.addEventListener('click', function(event) {
-      if (event.target === cropperModal) {
-        hideCropperModal();
+      
+      function resetDropdown(selectElement, placeholder) {
+        selectElement.innerHTML = `<option value="">${placeholder}</option>`;
+        selectElement.disabled = true;
+        selectElement.value = '';
       }
-    });
-    
-    // Enhanced Phone Number Validation - CHANGED TO 11 DIGITS
-    document.addEventListener('DOMContentLoaded', function() {
+      
+      // Common Dropdown Functionality
+      const notification = document.getElementById('notification');
+      const notificationDropdown = document.getElementById('notificationDropdown');
+      const staffProfile = document.getElementById('staffProfile');
+      const profileDropdown = document.getElementById('profileDropdown');
+      
+      notification.addEventListener('click', function(e) {
+        e.stopPropagation();
+        notificationDropdown.classList.toggle('active');
+        profileDropdown.classList.remove('active');
+      });
+      
+      staffProfile.addEventListener('click', function(e) {
+        e.stopPropagation();
+        profileDropdown.classList.toggle('active');
+        notificationDropdown.classList.remove('active');
+      });
+      
+      document.addEventListener('click', function() {
+        notificationDropdown.classList.remove('active');
+        profileDropdown.classList.remove('active');
+      });
+      
+      notificationDropdown.addEventListener('click', function(e) {
+        e.stopPropagation();
+      });
+      
+      profileDropdown.addEventListener('click', function(e) {
+        e.stopPropagation();
+      });
+      
+      // File input display functionality
+      document.querySelectorAll('.file-input').forEach(input => {
+        const fileNameElement = document.getElementById(input.id + '_name');
+        
+        input.addEventListener('change', function() {
+          if (this.files.length > 0) {
+            fileNameElement.textContent = this.files[0].name;
+            
+            // Preview profile photo
+            if (this.id === 'profile_photo' && this.files[0]) {
+              const reader = new FileReader();
+              reader.onload = function(e) {
+                // Show cropper modal instead of directly updating the preview
+                showCropperModal(e.target.result);
+              }
+              reader.readAsDataURL(this.files[0]);
+            }
+          } else {
+            fileNameElement.textContent = 'No file chosen';
+          }
+        });
+      });
+      
+      // Cropper functionality
+      let cropper;
+      const cropperModal = document.getElementById('cropperModal');
+      const imageToCrop = document.getElementById('imageToCrop');
+      const closeCropperModal = document.getElementById('closeCropperModal');
+      const cancelCrop = document.getElementById('cancelCrop');
+      const saveCrop = document.getElementById('saveCrop');
+      const croppedImageData = document.getElementById('cropped_image_data');
+      const profilePhotoPreview = document.getElementById('profilePhotoPreview');
+      const sidebarAvatar = document.getElementById('sidebarAvatar');
+      const topNavAvatar = document.getElementById('topNavAvatar');
+      
+      function showCropperModal(imageSrc) {
+        imageToCrop.src = imageSrc;
+        cropperModal.style.display = 'flex';
+        
+        // Initialize cropper
+        if (cropper) {
+          cropper.destroy();
+        }
+        
+        cropper = new Cropper(imageToCrop, {
+          aspectRatio: 1,
+          viewMode: 1,
+          preview: '.cropper-preview',
+          guides: true,
+          background: false,
+          movable: true,
+          rotatable: true,
+          scalable: true,
+          zoomable: true,
+          zoomOnTouch: true,
+          zoomOnWheel: true,
+          wheelZoomRatio: 0.1,
+          cropBoxMovable: true,
+          cropBoxResizable: true,
+          toggleDragModeOnDblclick: true,
+          minContainerWidth: 300,
+          minContainerHeight: 300,
+          responsive: true,
+          restore: true,
+          checkCrossOrigin: false,
+          checkOrientation: false,
+          modal: true,
+          highlight: false,
+          center: true,
+          autoCropArea: 0.8
+        });
+      }
+      
+      function hideCropperModal() {
+        cropperModal.style.display = 'none';
+        if (cropper) {
+          cropper.destroy();
+          cropper = null;
+        }
+      }
+      
+      closeCropperModal.addEventListener('click', hideCropperModal);
+      cancelCrop.addEventListener('click', hideCropperModal);
+      
+      saveCrop.addEventListener('click', function() {
+        if (cropper) {
+          // Get cropped canvas
+          const canvas = cropper.getCroppedCanvas({
+            width: 300,
+            height: 300,
+            fillColor: '#fff',
+            imageSmoothingEnabled: true,
+            imageSmoothingQuality: 'high'
+          });
+          
+          // Convert canvas to base64 data URL
+          const croppedImageUrl = canvas.toDataURL('image/png');
+          
+          // Update profile photo previews
+          profilePhotoPreview.src = croppedImageUrl;
+          sidebarAvatar.src = croppedImageUrl;
+          topNavAvatar.src = croppedImageUrl;
+          
+          // Set cropped image data to hidden field
+          croppedImageData.value = croppedImageUrl;
+          
+          // Hide modal
+          hideCropperModal();
+          
+          // Clear the file input to allow re-uploading the same file
+          document.getElementById('profile_photo').value = '';
+          document.getElementById('profile_photo_name').textContent = 'No file chosen';
+          
+          // Submit the form to save the cropped image
+          document.getElementById('profileForm').submit();
+        }
+      });
+      
+      // Close modal when clicking outside
+      window.addEventListener('click', function(event) {
+        if (event.target === cropperModal) {
+          hideCropperModal();
+        }
+      });
+      
+      // Enhanced Phone Number Validation - CHANGED TO 11 DIGITS
       const phoneInput = document.getElementById('phone');
       
       // Only allow numbers and limit to 11 digits
@@ -2637,117 +2930,84 @@ if (!empty($user['staff_id_photo'])) {
           e.preventDefault();
         }
       });
-    });
-    
-    // Address dropdown functionality
-    document.addEventListener('DOMContentLoaded', function() {
-      const regionSelect = document.getElementById('region');
-      const provinceSelect = document.getElementById('province');
-      const citySelect = document.getElementById('city');
-      const barangaySelect = document.getElementById('barangay');
-
-      regionSelect.addEventListener('change', function() {
-        const selectedRegion = regionSelect.value;
-        provinceSelect.innerHTML = '<option value="">Select Province</option>';
-        if (selectedRegion && regions[selectedRegion]) {
-          regions[selectedRegion].forEach(province => {
-            const option = document.createElement('option');
-            option.value = province;
-            option.textContent = province;
-            provinceSelect.appendChild(option);
-          });
-        }
-        // Clear dependent fields
-        citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
-        barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
-      });
-
-      provinceSelect.addEventListener('change', function() {
-        const selectedProvince = provinceSelect.value;
-        citySelect.innerHTML = '<option value="">Select City/Municipality</option>';
-        if (selectedProvince && provinces[selectedProvince]) {
-          provinces[selectedProvince].forEach(city => {
-            const option = document.createElement('option');
-            option.value = city;
-            option.textContent = city;
-            citySelect.appendChild(option);
-          });
-        }
-        // Clear dependent field
-        barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
-      });
-
-      citySelect.addEventListener('change', function() {
-        const selectedCity = citySelect.value;
-        barangaySelect.innerHTML = '<option value="">Select Barangay</option>';
-        if (selectedCity && cities[selectedCity]) {
-          cities[selectedCity].forEach(barangay => {
-            const option = document.createElement('option');
-            option.value = barangay;
-            option.textContent = barangay;
-            barangaySelect.appendChild(option);
-          });
-        }
-      });
-    });
-    
-    // Enhanced notification functionality
-    $(document).ready(function() {
-      // Handle notification click and mark as read
-      $('.notification-link').on('click', function(e) {
-        const notifId = $(this).data('notif-id');
-        const notificationItem = $(this);
-        
-        // Only mark as read if it's unread and has a valid ID
-        if (notificationItem.hasClass('unread') && notifId) {
-          // Send AJAX request to mark as read
-          $.ajax({
-            url: 'staff_profile.php',
-            type: 'POST',
-            data: {
-              mark_as_read: true,
-              notif_id: notifId
-            },
-            success: function(response) {
-              const result = JSON.parse(response);
-              if (result.success) {
-                // Update UI
-                notificationItem.removeClass('unread');
-                
-                // Update notification count
-                const currentCount = parseInt($('#notificationCount').text());
-                if (currentCount > 1) {
-                  $('#notificationCount').text(currentCount - 1);
-                } else {
-                  $('#notificationCount').remove();
+      
+      // Enhanced notification functionality
+      $(document).ready(function() {
+        // Handle notification click and mark as read
+        $('.notification-link').on('click', function(e) {
+          const notifId = $(this).data('notif-id');
+          const notificationItem = $(this);
+          
+          // Only mark as read if it's unread and has a valid ID
+          if (notificationItem.hasClass('unread') && notifId) {
+            // Send AJAX request to mark as read
+            $.ajax({
+              url: 'staff_profile.php',
+              type: 'POST',
+              data: {
+                mark_as_read: true,
+                notif_id: notifId
+              },
+              success: function(response) {
+                const result = JSON.parse(response);
+                if (result.success) {
+                  // Update UI
+                  notificationItem.removeClass('unread');
+                  
+                  // Update notification count
+                  const currentCount = parseInt($('#notificationCount').text());
+                  if (currentCount > 1) {
+                    $('#notificationCount').text(currentCount - 1);
+                  } else {
+                    $('#notificationCount').remove();
+                  }
                 }
+              },
+              error: function() {
+                console.log('Error marking notification as read');
               }
-            },
-            error: function() {
-              console.log('Error marking notification as read');
-            }
-          });
-        }
+            });
+          }
+        });
+        
+        // Add hover effects to cards
+        $('.card').hover(
+          function() {
+            $(this).css('transform', 'translateY(-5px)');
+          },
+          function() {
+            $(this).css('transform', 'translateY(0)');
+          }
+        );
       });
       
-      // Add hover effects to cards
-      $('.card').hover(
-        function() {
-          $(this).css('transform', 'translateY(-5px)');
-        },
-        function() {
-          $(this).css('transform', 'translateY(0)');
+      // Auto-hide alerts after 5 seconds
+      setTimeout(function() {
+        const alerts = document.querySelectorAll('.alert');
+        alerts.forEach(alert => {
+          alert.style.display = 'none';
+        });
+      }, 5000);
+      
+      // Helper function to show notifications
+      function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `alert alert-${type === 'error' ? 'error' : 'success'}`;
+        notification.innerHTML = `
+          <i class="fas fa-${type === 'error' ? 'exclamation-circle' : type === 'warning' ? 'exclamation-triangle' : 'check-circle'}"></i>
+          ${message}
+        `;
+        
+        const content = document.querySelector('.content');
+        if (content) {
+          content.insertBefore(notification, content.firstChild);
         }
-      );
+        
+        setTimeout(() => {
+          notification.remove();
+        }, 5000);
+      }
     });
-    
-    // Auto-hide alerts after 5 seconds
-    setTimeout(function() {
-      const alerts = document.querySelectorAll('.alert');
-      alerts.forEach(alert => {
-        alert.style.display = 'none';
-      });
-    }, 5000);
   </script>
 </body>
 </html>
