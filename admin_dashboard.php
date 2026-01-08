@@ -29,6 +29,174 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['user_role'] !== 'admin') {
 }
 
 // ============================================================================
+// COURSE MANAGEMENT FUNCTIONALITY - MODIFIED (WITH IN-MODAL MESSAGES)
+// ============================================================================
+
+// Initialize message variables
+$course_success_message = '';
+$course_error_message = '';
+
+// Handle course management actions
+if (isset($_POST['add_course'])) {
+    $course_code = trim($_POST['course_code']);
+    $course_name = trim($_POST['course_name']);
+    $course_college = trim($_POST['course_college']);
+    $course_description = trim($_POST['course_description']);
+    
+    // Check if new college was entered
+    $new_college = '';
+    if (isset($_POST['new_college']) && !empty(trim($_POST['new_college']))) {
+        $new_college = trim($_POST['new_college']);
+        // If new college is provided, use it instead of the dropdown value
+        if (!empty($new_college)) {
+            $course_college = $new_college;
+        }
+    }
+    
+    // Validate inputs
+    $errors = [];
+    
+    if (empty($course_code)) {
+        $errors[] = "Course code is required";
+    } elseif (strlen($course_code) > 20) {
+        $errors[] = "Course code must not exceed 20 characters";
+    }
+    
+    if (empty($course_name)) {
+        $errors[] = "Course name is required";
+    } elseif (strlen($course_name) > 255) {
+        $errors[] = "Course name must not exceed 255 characters";
+    }
+    
+    if (empty($course_college) || $course_college === '_new') {
+        $errors[] = "College/department is required";
+    } elseif (strlen($course_college) > 100) {
+        $errors[] = "College/department must not exceed 100 characters";
+    }
+    
+    if (strlen($course_description) > 1000) {
+        $errors[] = "Description must not exceed 1000 characters";
+    }
+    
+    if (empty($errors)) {
+        // Check for duplicate course code
+        $checkStmt = $conn->prepare("SELECT course_id FROM courses WHERE course_code = ?");
+        $checkStmt->execute([$course_code]);
+        
+        if ($checkStmt->rowCount() > 0) {
+            $course_error_message = "Course code already exists. Please use a different code.";
+        } else {
+            try {
+                $stmt = $conn->prepare("INSERT INTO courses (course_code, course_name, course_college, course_description, created_at) 
+                                       VALUES (?, ?, ?, ?, NOW())");
+                $stmt->execute([$course_code, $course_name, $course_college, $course_description]);
+                
+                $course_success_message = "Course added successfully!";
+                
+                // Clear form fields after successful submission
+                $_POST['course_code'] = '';
+                $_POST['course_name'] = '';
+                $_POST['course_college'] = '';
+                $_POST['new_college'] = '';
+                $_POST['course_description'] = '';
+                
+                // Create notification for action
+                $message = "New course added: $course_code - $course_name ($course_college)";
+                createAdminNotification($conn, 'course_management', $message);
+                
+                // Redirect to clear POST data and show success message
+                header("Location: admin_dashboard.php?course_success=1");
+                exit();
+                
+            } catch (PDOException $e) {
+                $course_error_message = "Database error: " . $e->getMessage();
+            }
+        }
+    } else {
+        $course_error_message = implode("<br>", $errors);
+    }
+}
+
+// Handle delete course
+if (isset($_GET['delete_course'])) {
+    $course_id = intval($_GET['delete_course']);
+    
+    // First get course details for message
+    $courseDetailsStmt = $conn->prepare("SELECT course_code, course_name, course_college FROM courses WHERE course_id = ?");
+    $courseDetailsStmt->execute([$course_id]);
+    $course = $courseDetailsStmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($course) {
+        // Check if any graduates are enrolled in this course
+        $checkStmt = $conn->prepare("SELECT COUNT(*) FROM graduates WHERE grad_degree LIKE ?");
+        $courseCode = $course['course_code'];
+        $checkStmt->execute(["%$courseCode%"]);
+        
+        if ($checkStmt->fetchColumn() > 0) {
+            $course_error_message = "Cannot delete '{$course['course_code']} - {$course['course_name']}' because graduates are enrolled in it.";
+        } else {
+            try {
+                $stmt = $conn->prepare("DELETE FROM courses WHERE course_id = ?");
+                $stmt->execute([$course_id]);
+                
+                $course_success_message = "Course '{$course['course_code']} - {$course['course_name']}' deleted successfully!";
+                
+                // Create notification for action
+                $message = "Course '{$course['course_code']} - {$course['course_name']}' was deleted";
+                createAdminNotification($conn, 'course_management', $message);
+                
+                // Redirect to clear GET data and show success message
+                header("Location: admin_dashboard.php?course_delete_success=1");
+                exit();
+                
+            } catch (PDOException $e) {
+                $course_error_message = "Database error: " . $e->getMessage();
+            }
+        }
+    } else {
+        $course_error_message = "Course not found.";
+    }
+}
+
+// Check for success messages from redirects
+if (isset($_GET['course_success'])) {
+    $course_success_message = "Course added successfully!";
+}
+
+if (isset($_GET['course_delete_success'])) {
+    $course_success_message = "Course deleted successfully!";
+}
+
+// Get course data for dashboard
+try {
+    $courses_stmt = $conn->query("
+        SELECT c.*, 
+               COUNT(g.grad_id) as graduate_count
+        FROM courses c
+        LEFT JOIN graduates g ON c.course_code = g.grad_degree
+        GROUP BY c.course_id
+        ORDER BY c.course_college, c.course_name
+    ");
+    $courses = $courses_stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Get unique colleges/departments
+    $colleges_stmt = $conn->query("
+        SELECT DISTINCT course_college 
+        FROM courses 
+        WHERE course_college IS NOT NULL AND course_college != ''
+        ORDER BY course_college
+    ");
+    $colleges = $colleges_stmt->fetchAll(PDO::FETCH_COLUMN);
+    
+} catch (PDOException $e) {
+    $courses = [];
+    $colleges = [];
+}
+
+// Get course counts
+$total_courses = count($courses);
+
+// ============================================================================
 // ENHANCED NOTIFICATION GENERATION SYSTEM - FIXED AND IMPROVED
 // ============================================================================
 
@@ -206,18 +374,21 @@ function checkApplicationTrends($conn) {
     }
     
     // Check for new applications since last check
-    $lastAppNotif = $conn->query("SELECT MAX(notif_created_at) FROM notifications WHERE notif_type = 'new_application'")->fetchColumn();
+    $lastAppNotifStmt = $conn->query("SELECT MAX(notif_created_at) FROM notifications WHERE notif_type = 'new_application'");
+    $lastAppNotif = $lastAppNotifStmt->fetchColumn();
     
     if ($lastAppNotif) {
-        $newApplications = $conn->query("
+        $newApplicationsStmt = $conn->query("
             SELECT COUNT(*) as count FROM applications 
             WHERE app_applied_at > '$lastAppNotif'
-        ")->fetch(PDO::FETCH_ASSOC);
+        ");
+        $newApplications = $newApplicationsStmt->fetch(PDO::FETCH_ASSOC);
     } else {
-        $newApplications = $conn->query("
+        $newApplicationsStmt = $conn->query("
             SELECT COUNT(*) as count FROM applications 
             WHERE app_applied_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
-        ")->fetch(PDO::FETCH_ASSOC);
+        ");
+        $newApplications = $newApplicationsStmt->fetch(PDO::FETCH_ASSOC);
     }
     
     if ($newApplications['count'] > 0) {
@@ -236,14 +407,15 @@ function checkSystemAnalytics($conn) {
     $notificationsGenerated = 0;
     
     // Check employment rate trends
-    $employmentRate = $conn->query("
+    $employmentRateStmt = $conn->query("
         SELECT 
             COUNT(*) as total_graduates,
             SUM(CASE WHEN a.app_status = 'hired' THEN 1 ELSE 0 END) as hired_graduates
         FROM graduates g
         LEFT JOIN users u ON g.grad_usr_id = u.usr_id
         LEFT JOIN applications a ON u.usr_id = a.app_grad_usr_id
-    ")->fetch(PDO::FETCH_ASSOC);
+    ");
+    $employmentRate = $employmentRateStmt->fetch(PDO::FETCH_ASSOC);
     
     if ($employmentRate['total_graduates'] > 0) {
         $employmentPercentage = round(($employmentRate['hired_graduates'] / $employmentRate['total_graduates']) * 100);
@@ -274,14 +446,15 @@ function checkSystemAnalytics($conn) {
     }
     
     // Check top skills in demand - FIXED QUERY
-    $topSkills = $conn->query("
+    $topSkillsStmt = $conn->query("
         SELECT s.skill_name, COUNT(gs.skill_id) as demand_count
         FROM graduate_skills gs
         JOIN skills s ON gs.skill_id = s.skill_id
         GROUP BY s.skill_name
         ORDER BY demand_count DESC
         LIMIT 1
-    ")->fetch(PDO::FETCH_ASSOC);
+    ");
+    $topSkills = $topSkillsStmt->fetch(PDO::FETCH_ASSOC);
     
     if ($topSkills && $topSkills['demand_count'] >= 3) {
         $existingNotif = $conn->prepare("SELECT COUNT(*) FROM notifications 
@@ -406,15 +579,16 @@ try {
     // ============================================================================
     
     // Portfolio issues (users without complete profile) - Using the same query from portfolio code
-    $portfolio_issues = $conn->query("
+    $portfolio_issues_stmt = $conn->query("
         SELECT COUNT(*) as count FROM users u 
         LEFT JOIN graduates g ON u.usr_id = g.grad_usr_id 
         WHERE u.usr_role = 'graduate' 
         AND (g.grad_id IS NULL OR g.grad_school_id = '' OR g.grad_degree = '' OR g.grad_job_preference = '')
-    ")->fetch(PDO::FETCH_ASSOC)['count'];
+    ");
+    $portfolio_issues = $portfolio_issues_stmt->fetch(PDO::FETCH_ASSOC)['count'];
     
     // Get detailed portfolio completeness data - Enhanced calculation from portfolio code
-    $portfolio_completeness_data = $conn->query("
+    $portfolio_completeness_data_stmt = $conn->query("
         SELECT 
             COUNT(*) as total_graduates,
             SUM(CASE WHEN g.grad_school_id IS NOT NULL AND g.grad_school_id != '' THEN 1 ELSE 0 END) as has_school_id,
@@ -428,7 +602,8 @@ try {
         FROM users u
         LEFT JOIN graduates g ON u.usr_id = g.grad_usr_id
         WHERE u.usr_role = 'graduate'
-    ")->fetch(PDO::FETCH_ASSOC);
+    ");
+    $portfolio_completeness_data = $portfolio_completeness_data_stmt->fetch(PDO::FETCH_ASSOC);
     
     // FIXED: Check if there are any graduates before calculating percentages
     $portfolio_completeness = 0;
@@ -500,7 +675,7 @@ try {
     }
     
     // Get skills data for graduates
-    $skills_data = $conn->query("
+    $skills_data_stmt = $conn->query("
         SELECT 
             COUNT(DISTINCT gs.grad_usr_id) as graduates_with_skills,
             AVG(skill_count) as avg_skills_per_graduate
@@ -509,7 +684,8 @@ try {
             FROM graduate_skills
             GROUP BY grad_usr_id
         ) gs
-    ")->fetch(PDO::FETCH_ASSOC);
+    ");
+    $skills_data = $skills_data_stmt->fetch(PDO::FETCH_ASSOC);
     
     // Update skills breakdown if there are graduates
     if ($portfolio_completeness_data['total_graduates'] > 0) {
@@ -517,14 +693,15 @@ try {
     }
     
     // Get portfolio documents data
-    $documents_data = $conn->query("
+    $documents_data_stmt = $conn->query("
         SELECT 
             COUNT(DISTINCT port_usr_id) as graduates_with_documents,
             SUM(CASE WHEN port_item_type = 'resume' THEN 1 ELSE 0 END) as resume_count,
             SUM(CASE WHEN port_item_type = 'certificate' THEN 1 ELSE 0 END) as certificate_count,
             SUM(CASE WHEN port_item_type = 'project' THEN 1 ELSE 0 END) as project_count
         FROM portfolio_items
-    ")->fetch(PDO::FETCH_ASSOC);
+    ");
+    $documents_data = $documents_data_stmt->fetch(PDO::FETCH_ASSOC);
     
     // Update documents breakdown if there are graduates
     if ($portfolio_completeness_data['total_graduates'] > 0) {
@@ -541,14 +718,15 @@ try {
     $employer_approval_rate = $total_employers > 0 ? round(($employers_count / $total_employers) * 100) : 0;
     
     // Employment rate calculation
-    $employment_data = $conn->query("
+    $employment_data_stmt = $conn->query("
         SELECT 
             COUNT(*) as total_graduates,
             SUM(CASE WHEN a.app_status = 'hired' THEN 1 ELSE 0 END) as hired_graduates
         FROM graduates g
         LEFT JOIN users u ON g.grad_usr_id = u.usr_id
         LEFT JOIN applications a ON u.usr_id = a.app_grad_usr_id
-    ")->fetch(PDO::FETCH_ASSOC);
+    ");
+    $employment_data = $employment_data_stmt->fetch(PDO::FETCH_ASSOC);
     
     $employment_rate = $employment_data['total_graduates'] > 0 ? 
         round(($employment_data['hired_graduates'] / $employment_data['total_graduates']) * 100) : 0;
@@ -561,7 +739,7 @@ try {
     ];
     
     // Get employment rate by course data
-    $employment_rates = $conn->query("
+    $employment_rates_stmt = $conn->query("
         SELECT g.grad_degree, 
                COUNT(*) as total_graduates,
                SUM(CASE WHEN a.app_status = 'hired' THEN 1 ELSE 0 END) as hired_graduates
@@ -572,7 +750,8 @@ try {
         GROUP BY g.grad_degree
         ORDER BY total_graduates DESC
         LIMIT 5
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $employment_rates = $employment_rates_stmt->fetchAll(PDO::FETCH_ASSOC);
     
     $employment_rate_data = [];
     foreach ($employment_rates as $rate) {
@@ -585,11 +764,17 @@ try {
     }
     
     // Get job status distribution
-    $job_status_data = $conn->query("
+    $job_status_data_stmt = $conn->query("
         SELECT job_status, COUNT(*) as count 
         FROM jobs 
         GROUP BY job_status
-    ")->fetchAll(PDO::FETCH_KEY_PAIR);
+    ");
+    $job_status_data_result = $job_status_data_stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    $job_status_data = [];
+    foreach ($job_status_data_result as $row) {
+        $job_status_data[$row['job_status']] = $row['count'];
+    }
     
     // Ensure all statuses are represented
     $all_statuses = ['active', 'pending', 'rejected', 'closed'];
@@ -600,13 +785,14 @@ try {
     }
     
     // FIXED: Get application trends for last 30 days - CORRECTED QUERY WITH CONSISTENT DATA
-    $application_trends = $conn->query("
+    $application_trends_stmt = $conn->query("
         SELECT DATE(app_applied_at) as application_date, COUNT(*) as count
         FROM applications
         WHERE app_applied_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
         GROUP BY DATE(app_applied_at)
         ORDER BY application_date
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $application_trends = $application_trends_stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // If no application trends, create empty data for chart (NOT random data)
     if (empty($application_trends)) {
@@ -620,14 +806,15 @@ try {
     }
     
     // FIXED: Get top skills from graduate profiles - CORRECTED QUERY WITH CONSISTENT DATA
-    $top_skills = $conn->query("
+    $top_skills_stmt = $conn->query("
         SELECT s.skill_name, COUNT(gs.skill_id) as count
         FROM graduate_skills gs
         JOIN skills s ON gs.skill_id = s.skill_id
         GROUP BY s.skill_name
         ORDER BY count DESC
         LIMIT 10
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $top_skills = $top_skills_stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Format for chart - Use actual data only, no sample data
     $top_skills_chart = [];
@@ -641,7 +828,7 @@ try {
     }
     
     // FIXED: Get skills breakdown by category - CORRECTED QUERY
-    $skills_by_category = $conn->query("
+    $skills_by_category_stmt = $conn->query("
         SELECT s.skill_category, COUNT(gs.skill_id) as count
         FROM graduate_skills gs
         JOIN skills s ON gs.skill_id = s.skill_id
@@ -649,17 +836,19 @@ try {
         GROUP BY s.skill_category
         ORDER BY count DESC
         LIMIT 5
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $skills_by_category = $skills_by_category_stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Get top job domains
-    $top_domains = $conn->query("
+    $top_domains_stmt = $conn->query("
         SELECT job_domain, COUNT(*) as count
         FROM jobs
         WHERE job_status = 'active' AND job_domain IS NOT NULL AND job_domain != ''
         GROUP BY job_domain
         ORDER BY count DESC
         LIMIT 5
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $top_domains = $top_domains_stmt->fetchAll(PDO::FETCH_ASSOC);
     
 } catch (PDOException $e) {
     // Set default values if there's an error
@@ -712,6 +901,8 @@ function getNotificationLink($notification) {
         strpos($message, 'auto-approve') !== false ||
         strpos($message, 'password') !== false) {
         return 'admin_settings.php';
+    } elseif (strpos($type, 'course') !== false || strpos($message, 'course') !== false) {
+        return 'admin_dashboard.php#course-management';
     } elseif (strpos($type, 'user') !== false || strpos($message, 'user') !== false || strpos($message, 'registered') !== false) {
         return 'admin_manage_users.php';
     } elseif (strpos($type, 'job') !== false || strpos($message, 'job') !== false || strpos($message, 'posting') !== false) {
@@ -737,7 +928,9 @@ function getNotificationLink($notification) {
 function getNotificationIcon($notification) {
     $type = strtolower($notification['notif_type']);
     
-    if (strpos($type, 'user') !== false) {
+    if (strpos($type, 'course') !== false) {
+        return 'fas fa-graduation-cap';
+    } elseif (strpos($type, 'user') !== false) {
         return 'fas fa-user-plus';
     } elseif (strpos($type, 'job') !== false) {
         return 'fas fa-briefcase';
@@ -1213,6 +1406,32 @@ function getNotificationPriority($notification) {
             padding-bottom: 10px;
         }
         
+        /* MODIFIED: Button Styles - Made Courses button consistent with Archived button from first code */
+        .btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), #8a0404);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #8a0404, #6e0303);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+        }
+        
         /* Enhanced Dashboard Cards - Mobile Responsive Grid */
         .dashboard-cards {
             display: grid;
@@ -1480,6 +1699,335 @@ function getNotificationPriority($notification) {
             color: #666;
         }
         
+        /* Course Management Modal Styles - MODIFIED (REMOVED STATUS ELEMENTS) */
+        .course-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            animation: fadeInOverlay 0.3s ease;
+        }
+        
+        @keyframes fadeInOverlay {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .course-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 1200px;
+            max-height: 90vh;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            display: none;
+            animation: fadeInModal 0.3s ease;
+            overflow: hidden;
+        }
+        
+        @keyframes fadeInModal {
+            from { opacity: 0; transform: translate(-50%, -48%); }
+            to { opacity: 1; transform: translate(-50%, -50%); }
+        }
+        
+        .course-modal.active {
+            display: block;
+        }
+        
+        .course-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 30px;
+            background: linear-gradient(135deg, var(--primary-color), #8a0404);
+            color: white;
+        }
+        
+        .course-modal-title {
+            font-size: 1.6rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .course-modal-title i {
+            color: var(--secondary-color);
+        }
+        
+        .close-modal {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+        
+        .close-modal:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: rotate(90deg);
+        }
+        
+        .course-modal-content {
+            padding: 30px;
+            max-height: calc(90vh - 80px);
+            overflow-y: auto;
+        }
+        
+        .course-management-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        
+        @media (max-width: 1200px) {
+            .course-management-content {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .form-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .table-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .form-title {
+            font-size: 1.2rem;
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .form-title i {
+            color: var(--secondary-color);
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--primary-color);
+        }
+        
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.95rem;
+            transition: border-color 0.3s;
+        }
+        
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            border-color: var(--primary-color);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(110, 3, 3, 0.1);
+        }
+        
+        .form-textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        
+        .btn-small {
+            padding: 8px 12px;
+            font-size: 0.85rem;
+        }
+        
+        .btn-success {
+            background: linear-gradient(to right, var(--green), #2c9c1a);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(to right, #ff9800, #f57c00);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(to right, var(--red), #c62828);
+            color: white;
+        }
+        
+        .alert {
+            padding: 12px 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideDown 0.3s ease;
+        }
+        
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .alert i {
+            font-size: 1.1rem;
+        }
+        
+        .courses-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .courses-table th,
+        .courses-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .courses-table th {
+            background-color: #e9ecef;
+            font-weight: 600;
+            color: var(--primary-color);
+            position: sticky;
+            top: 0;
+        }
+        
+        .courses-table tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .search-filter {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .search-input {
+            flex: 1;
+        }
+        
+        .filter-select {
+            width: 150px;
+        }
+        
+        /* Confirmation Dialog Styles */
+        .confirmation-dialog {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .confirmation-dialog.active {
+            display: flex;
+        }
+        
+        .confirmation-content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            max-width: 500px;
+            width: 90%;
+            overflow: hidden;
+            animation: fadeInModal 0.3s ease;
+        }
+        
+        .confirmation-header {
+            padding: 20px 25px;
+            background: linear-gradient(135deg, var(--primary-color), #8a0404);
+            color: white;
+            font-size: 1.3rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .confirmation-body {
+            padding: 25px;
+            color: #333;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+        
+        .confirmation-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 12px 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            color: #856404;
+            font-size: 0.9rem;
+        }
+        
+        .confirmation-footer {
+            padding: 15px 25px;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            border-top: 1px solid #dee2e6;
+        }
+        
         /* Mobile Menu Toggle */
         .mobile-menu-toggle {
             display: none;
@@ -1636,6 +2184,45 @@ function getNotificationPriority($notification) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
+            
+            .course-modal {
+                width: 95%;
+                max-height: 95vh;
+            }
+            
+            .course-modal-content {
+                padding: 15px;
+            }
+            
+            .course-management-content {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            .search-filter {
+                flex-direction: column;
+            }
+            
+            .filter-select {
+                width: 100%;
+            }
+            
+            .courses-table {
+                display: block;
+                overflow-x: auto;
+            }
+            
+            .confirmation-content {
+                width: 95%;
+            }
+            
+            .confirmation-footer {
+                flex-direction: column;
+            }
+            
+            .confirmation-footer .btn {
+                width: 100%;
+            }
         }
         
         @media (max-width: 576px) {
@@ -1716,6 +2303,14 @@ function getNotificationPriority($notification) {
             .admin-name {
                 font-size: 0.9rem;
             }
+            
+            .course-modal-header {
+                padding: 15px 20px;
+            }
+            
+            .course-modal-title {
+                font-size: 1.4rem;
+            }
         }
         
         @media (max-width: 480px) {
@@ -1781,6 +2376,20 @@ function getNotificationPriority($notification) {
             .stat-value {
                 font-size: 1.1rem;
             }
+            
+            .course-modal-header {
+                padding: 12px 15px;
+            }
+            
+            .course-modal-title {
+                font-size: 1.2rem;
+            }
+            
+            .close-modal {
+                width: 35px;
+                height: 35px;
+                font-size: 1.2rem;
+            }
         }
         
         @media (max-width: 400px) {
@@ -1829,6 +2438,10 @@ function getNotificationPriority($notification) {
             
             .admin-name {
                 font-size: 0.8rem;
+            }
+            
+            .course-modal-title {
+                font-size: 1.1rem;
             }
         }
         
@@ -1923,6 +2536,28 @@ function getNotificationPriority($notification) {
         .no-data-message p {
             font-size: 0.9rem;
             color: #999;
+        }
+        
+        /* Success Message Animation */
+        .success-flash {
+            animation: successFlash 2s ease;
+        }
+        
+        @keyframes successFlash {
+            0% { background-color: #d4edda; }
+            50% { background-color: #c3e6cb; }
+            100% { background-color: #d4edda; }
+        }
+        
+        /* Auto-hide message animation */
+        .auto-hide {
+            animation: autoHide 5s forwards;
+        }
+        
+        @keyframes autoHide {
+            0% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { opacity: 0; display: none; }
         }
     </style>
 </head>
@@ -2063,6 +2698,203 @@ function getNotificationPriority($notification) {
         <!-- Page Header -->
         <div class="page-header">
             <h1 class="page-title">Home Dashboard</h1>
+            <div>
+                <!-- MODIFIED: Made Courses button consistent with Archived button from first code -->
+                <button id="openCourseModal" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-graduation-cap"></i>Courses
+                </button>
+            </div>
+        </div>
+        
+        <!-- Confirmation Dialog for Delete -->
+        <div class="confirmation-dialog" id="confirmationDialog">
+            <div class="confirmation-content">
+                <div class="confirmation-header">
+                    <i class="fas fa-exclamation-triangle"></i> Confirm Deletion
+                </div>
+                <div class="confirmation-body">
+                    <p id="confirmationMessage">Are you sure you want to delete this course?</p>
+                    <div class="confirmation-warning" id="confirmationWarning">
+                        <i class="fas fa-info-circle"></i> Courses with enrolled graduates cannot be deleted.
+                    </div>
+                    <p><strong id="courseDetails"></strong></p>
+                </div>
+                <div class="confirmation-footer">
+                    <button class="btn" id="cancelDelete">Cancel</button>
+                    <a href="#" class="btn btn-danger" id="confirmDelete">Delete</a>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Course Management Modal - MODIFIED (REMOVED STATUS ELEMENTS) -->
+        <div class="course-modal-overlay" id="courseModalOverlay"></div>
+        <div class="course-modal" id="courseModal">
+            <div class="course-modal-header">
+                <h2 class="course-modal-title">
+                    <i class="fas fa-graduation-cap"></i> Course Management
+                </h2>
+                <button class="close-modal" id="closeCourseModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="course-modal-content">
+                <!-- Course Stats - SIMPLIFIED (ONLY SHOWING TOTAL COURSES) -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+                    <div style="font-size: 2rem; font-weight: bold; color: var(--primary-color);"><?= $total_courses ?></div>
+                    <div style="font-size: 1rem; color: #666;">Total Courses in System</div>
+                </div>
+                
+                <!-- Display Course Messages INSIDE THE MODAL -->
+                <?php if (!empty($course_success_message)): ?>
+                    <div class="alert alert-success success-flash" id="successMessage">
+                        <i class="fas fa-check-circle"></i>
+                        <?= $course_success_message ?>
+                    </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($course_error_message)): ?>
+                    <div class="alert alert-error" id="errorMessage">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <?= $course_error_message ?>
+                    </div>
+                <?php endif; ?>
+                
+                <div class="course-management-content">
+                    <!-- Add Course Form -->
+                    <div class="form-card">
+                        <h3 class="form-title">
+                            <i class="fas fa-plus-circle"></i> Add New Course
+                        </h3>
+                        
+                        <form method="POST" action="" id="addCourseForm">
+                            <div class="form-group">
+                                <label class="form-label" for="course_code">Course Code *</label>
+                                <input type="text" id="course_code" name="course_code" class="form-input" 
+                                       value="<?= isset($_POST['course_code']) ? htmlspecialchars($_POST['course_code']) : '' ?>"
+                                       placeholder="e.g., BSCS, BSIT, BEEd" required maxlength="20">
+                                <small style="font-size: 0.8rem; color: #666;">Unique identifier for the course (max 20 characters)</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label" for="course_name">Course Name *</label>
+                                <input type="text" id="course_name" name="course_name" class="form-input" 
+                                       value="<?= isset($_POST['course_name']) ? htmlspecialchars($_POST['course_name']) : '' ?>"
+                                       placeholder="e.g., Bachelor of Science in Computer Science" required maxlength="255">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label" for="course_college">College/Department *</label>
+                                <select id="course_college" name="course_college" class="form-select" required>
+                                    <option value="">Select College/Department</option>
+                                    <?php if (!empty($colleges)): ?>
+                                        <?php foreach ($colleges as $college): ?>
+                                            <option value="<?= htmlspecialchars($college) ?>" <?= (isset($_POST['course_college']) && $_POST['course_college'] == $college) ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($college) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                    <option value="_new" <?= (isset($_POST['course_college']) && $_POST['course_college'] == '_new') ? 'selected' : '' ?>>Add New College/Department</option>
+                                </select>
+                                <input type="text" id="new_college" name="new_college" class="form-input" 
+                                       value="<?= isset($_POST['new_college']) ? htmlspecialchars($_POST['new_college']) : '' ?>"
+                                       placeholder="Enter new college/department name" style="display: <?= (isset($_POST['course_college']) && $_POST['course_college'] == '_new') ? 'block' : 'none'; ?>; margin-top: 8px;" maxlength="100">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label" for="course_description">Course Description</label>
+                                <textarea id="course_description" name="course_description" class="form-textarea" 
+                                          placeholder="Brief description of the course..." maxlength="1000"><?= isset($_POST['course_description']) ? htmlspecialchars($_POST['course_description']) : '' ?></textarea>
+                                <small style="font-size: 0.8rem; color: #666;">Optional (max 1000 characters)</small>
+                            </div>
+                            
+                            <button type="submit" name="add_course" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Add Course
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Courses List Table - MODIFIED (REMOVED STATUS COLUMN AND BUTTONS) -->
+                    <div class="table-card">
+                        <h3 class="form-title">
+                            <i class="fas fa-list"></i> Available Courses
+                        </h3>
+                        
+                        <!-- Search and Filter -->
+                        <div class="search-filter">
+                            <input type="text" id="searchCourses" class="form-input search-input" 
+                                   placeholder="Search courses...">
+                            <select id="filterCollege" class="form-select filter-select">
+                                <option value="">All Colleges</option>
+                                <?php if (!empty($colleges)): ?>
+                                    <?php foreach ($colleges as $college): ?>
+                                        <option value="<?= htmlspecialchars($college) ?>"><?= htmlspecialchars($college) ?></option>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </select>
+                        </div>
+                        
+                        <?php if (!empty($courses)): ?>
+                            <div style="overflow-x: auto; max-height: 400px;">
+                                <table class="courses-table" id="coursesTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Code</th>
+                                            <th>Name</th>
+                                            <th>College</th>
+                                            <th>Graduates</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($courses as $course): ?>
+                                        <tr data-college="<?= htmlspecialchars($course['course_college']) ?>">
+                                            <td><strong><?= htmlspecialchars($course['course_code']) ?></strong></td>
+                                            <td>
+                                                <div><?= htmlspecialchars($course['course_name']) ?></div>
+                                                <?php if (!empty($course['course_description'])): ?>
+                                                    <div style="font-size: 0.8rem; color: #666; margin-top: 3px;">
+                                                        <?= htmlspecialchars(substr($course['course_description'], 0, 50)) ?>...
+                                                    </div>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td><?= htmlspecialchars($course['course_college']) ?></td>
+                                            <td style="text-align: center;">
+                                                <span style="font-weight: bold; color: var(--primary-color);">
+                                                    <?= $course['graduate_count'] ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div class="action-buttons">
+                                                    <button class="btn btn-small btn-danger delete-course-btn"
+                                                            data-course-id="<?= $course['course_id'] ?>"
+                                                            data-course-code="<?= htmlspecialchars($course['course_code']) ?>"
+                                                            data-course-name="<?= htmlspecialchars($course['course_name']) ?>"
+                                                            data-course-college="<?= htmlspecialchars($course['course_college']) ?>"
+                                                            data-graduate-count="<?= $course['graduate_count'] ?>"
+                                                            title="Delete">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <div style="margin-top: 15px; text-align: center; color: #666; font-size: 0.9rem;">
+                                Showing <?= count($courses) ?> course(s)
+                            </div>
+                        <?php else: ?>
+                            <div style="text-align: center; padding: 40px; color: #999;">
+                                <i class="fas fa-graduation-cap" style="font-size: 3rem; margin-bottom: 15px;"></i>
+                                <h3>No Courses Found</h3>
+                                <p>Add your first course using the form on the left.</p>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <!-- Enhanced Dashboard Cards - Mobile Responsive Grid -->
@@ -2397,132 +3229,416 @@ function getNotificationPriority($notification) {
                     });
                 }
             });
+            
+            // Auto-open modal if there are success or error messages
+            const successMessage = document.getElementById('successMessage');
+            const errorMessage = document.getElementById('errorMessage');
+            
+            if (successMessage || errorMessage) {
+                setTimeout(() => {
+                    courseModalOverlay.style.display = 'block';
+                    courseModal.classList.add('active');
+                    document.body.style.overflow = 'hidden';
+                }, 300);
+            }
+        });
+        
+        // Course Management Modal Functionality
+        const openCourseModalBtn = document.getElementById('openCourseModal');
+        const closeCourseModalBtn = document.getElementById('closeCourseModal');
+        const courseModalOverlay = document.getElementById('courseModalOverlay');
+        const courseModal = document.getElementById('courseModal');
+        
+        // Open modal when "Courses" button is clicked
+        if (openCourseModalBtn) {
+            openCourseModalBtn.addEventListener('click', function() {
+                courseModalOverlay.style.display = 'block';
+                courseModal.classList.add('active');
+                document.body.style.overflow = 'hidden'; // Prevent background scrolling
+            });
+        }
+        
+        // Close modal when close button is clicked
+        if (closeCourseModalBtn) {
+            closeCourseModalBtn.addEventListener('click', function() {
+                courseModalOverlay.style.display = 'none';
+                courseModal.classList.remove('active');
+                document.body.style.overflow = 'auto'; // Restore scrolling
+            });
+        }
+        
+        // Close modal when overlay is clicked
+        if (courseModalOverlay) {
+            courseModalOverlay.addEventListener('click', function() {
+                courseModalOverlay.style.display = 'none';
+                courseModal.classList.remove('active');
+                document.body.style.overflow = 'auto'; // Restore scrolling
+            });
+        }
+        
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && courseModal.classList.contains('active')) {
+                courseModalOverlay.style.display = 'none';
+                courseModal.classList.remove('active');
+                document.body.style.overflow = 'auto'; // Restore scrolling
+            }
+        });
+        
+        // Prevent modal from closing when clicking inside modal content
+        courseModal.addEventListener('click', function(event) {
+            event.stopPropagation();
+        });
+
+        // Course Management Functionality
+        // New college/department input toggle - FIXED
+        const courseCollegeSelect = document.getElementById('course_college');
+        const newCollegeInput = document.getElementById('new_college');
+        
+        if (courseCollegeSelect && newCollegeInput) {
+            courseCollegeSelect.addEventListener('change', function() {
+                if (this.value === '_new') {
+                    newCollegeInput.style.display = 'block';
+                    newCollegeInput.required = true;
+                    // Clear the select name and set the input name
+                    this.name = '';
+                    newCollegeInput.name = 'course_college';
+                } else {
+                    newCollegeInput.style.display = 'none';
+                    newCollegeInput.required = false;
+                    // Restore the select name and clear the input name
+                    this.name = 'course_college';
+                    newCollegeInput.name = 'new_college';
+                    // Clear the new college input value
+                    newCollegeInput.value = '';
+                }
+            });
+        }
+
+        // Course search and filter functionality
+        const searchInput = document.getElementById('searchCourses');
+        const filterCollege = document.getElementById('filterCollege');
+        const coursesTable = document.getElementById('coursesTable');
+        
+        function filterCourses() {
+            if (coursesTable) {
+                const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
+                const selectedCollege = filterCollege ? filterCollege.value : '';
+                
+                const rows = coursesTable.querySelectorAll('tbody tr');
+                let visibleCount = 0;
+                
+                rows.forEach(row => {
+                    const code = row.cells[0].textContent.toLowerCase();
+                    const name = row.cells[1].textContent.toLowerCase();
+                    const college = row.getAttribute('data-college');
+                    
+                    const matchesSearch = code.includes(searchTerm) || name.includes(searchTerm);
+                    const matchesCollege = !selectedCollege || college === selectedCollege;
+                    
+                    if (matchesSearch && matchesCollege) {
+                        row.style.display = '';
+                        visibleCount++;
+                    } else {
+                        row.style.display = 'none';
+                    }
+                });
+            }
+        }
+        
+        if (searchInput) searchInput.addEventListener('input', filterCourses);
+        if (filterCollege) filterCollege.addEventListener('change', filterCourses);
+
+        // Form validation
+        const addCourseForm = document.getElementById('addCourseForm');
+        if (addCourseForm) {
+            addCourseForm.addEventListener('submit', function(e) {
+                const courseCode = document.getElementById('course_code')?.value.trim() || '';
+                const courseName = document.getElementById('course_name')?.value.trim() || '';
+                const courseCollegeSelect = document.getElementById('course_college');
+                const courseCollege = courseCollegeSelect ? courseCollegeSelect.value : '';
+                const newCollege = document.getElementById('new_college')?.value.trim() || '';
+                
+                let isValid = true;
+                
+                // Clear previous error messages
+                document.querySelectorAll('.error-message').forEach(el => el.remove());
+                
+                // Validate course code
+                if (!courseCode) {
+                    showError('course_code', 'Course code is required');
+                    isValid = false;
+                } else if (courseCode.length > 20) {
+                    showError('course_code', 'Course code must not exceed 20 characters');
+                    isValid = false;
+                }
+                
+                // Validate course name
+                if (!courseName) {
+                    showError('course_name', 'Course name is required');
+                    isValid = false;
+                } else if (courseName.length > 255) {
+                    showError('course_name', 'Course name must not exceed 255 characters');
+                    isValid = false;
+                }
+                
+                // Validate college
+                if (courseCollege === '_new') {
+                    if (!newCollege) {
+                        showError('new_college', 'New college/department name is required');
+                        isValid = false;
+                    } else if (newCollege.length > 100) {
+                        showError('new_college', 'College/department must not exceed 100 characters');
+                        isValid = false;
+                    }
+                } else if (!courseCollege) {
+                    showError('course_college', 'College/department is required');
+                    isValid = false;
+                }
+                
+                if (!isValid) {
+                    e.preventDefault();
+                }
+            });
+        }
+        
+        function showError(fieldId, message) {
+            const field = document.getElementById(fieldId);
+            if (field) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.style.color = 'var(--red)';
+                errorDiv.style.fontSize = '0.85rem';
+                errorDiv.style.marginTop = '5px';
+                errorDiv.textContent = message;
+                
+                field.parentNode.appendChild(errorDiv);
+                field.style.borderColor = 'var(--red)';
+            }
+        }
+        
+        // Confirmation Dialog for Delete
+        const confirmationDialog = document.getElementById('confirmationDialog');
+        const confirmationMessage = document.getElementById('confirmationMessage');
+        const confirmationWarning = document.getElementById('confirmationWarning');
+        const courseDetails = document.getElementById('courseDetails');
+        const cancelDeleteBtn = document.getElementById('cancelDelete');
+        const confirmDeleteBtn = document.getElementById('confirmDelete');
+        
+        // Handle delete course button clicks
+        document.querySelectorAll('.delete-course-btn').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                
+                const courseId = this.getAttribute('data-course-id');
+                const courseCode = this.getAttribute('data-course-code');
+                const courseName = this.getAttribute('data-course-name');
+                const courseCollege = this.getAttribute('data-course-college');
+                const graduateCount = parseInt(this.getAttribute('data-graduate-count'));
+                
+                // Update confirmation dialog content
+                courseDetails.textContent = `${courseCode} - ${courseName} (${courseCollege})`;
+                
+                // Show warning if there are graduates
+                if (graduateCount > 0) {
+                    confirmationWarning.innerHTML = `<i class="fas fa-info-circle"></i> This course has ${graduateCount} enrolled graduate(s) and cannot be deleted.`;
+                    confirmationWarning.style.display = 'block';
+                    confirmDeleteBtn.style.display = 'none';
+                    confirmationMessage.textContent = "Cannot delete course with enrolled graduates";
+                } else {
+                    confirmationWarning.innerHTML = `<i class="fas fa-info-circle"></i> Are you sure you want to delete this course? This action cannot be undone.`;
+                    confirmationWarning.style.display = 'block';
+                    confirmDeleteBtn.style.display = 'inline-flex';
+                    confirmationMessage.textContent = "Are you sure you want to delete this course?";
+                }
+                
+                // Set delete URL
+                confirmDeleteBtn.href = `admin_dashboard.php?delete_course=${courseId}`;
+                
+                // Show confirmation dialog
+                confirmationDialog.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            });
+        });
+        
+        // Cancel delete
+        if (cancelDeleteBtn) {
+            cancelDeleteBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                confirmationDialog.classList.remove('active');
+                document.body.style.overflow = 'auto';
+            });
+        }
+        
+        // Close confirmation dialog when clicking outside
+        confirmationDialog.addEventListener('click', function(e) {
+            if (e.target === confirmationDialog) {
+                confirmationDialog.classList.remove('active');
+                document.body.style.overflow = 'auto';
+            }
+        });
+        
+        // Close confirmation dialog with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && confirmationDialog.classList.contains('active')) {
+                confirmationDialog.classList.remove('active');
+                document.body.style.overflow = 'auto';
+            }
+        });
+        
+        // Auto-hide success message after 5 seconds
+        document.addEventListener('DOMContentLoaded', function() {
+            const successMessage = document.getElementById('successMessage');
+            if (successMessage) {
+                setTimeout(() => {
+                    successMessage.style.opacity = '0';
+                    setTimeout(() => {
+                        successMessage.style.display = 'none';
+                    }, 300);
+                }, 5000);
+            }
+            
+            // Auto-hide error message after 10 seconds
+            const errorMessage = document.getElementById('errorMessage');
+            if (errorMessage) {
+                setTimeout(() => {
+                    errorMessage.style.opacity = '0';
+                    setTimeout(() => {
+                        errorMessage.style.display = 'none';
+                    }, 300);
+                }, 10000);
+            }
         });
         
         // Chart.js Configuration with Percentage Display
         document.addEventListener('DOMContentLoaded', function() {
             // User Distribution Chart (Pie)
-            const userDistributionCtx = document.getElementById('userDistributionChart').getContext('2d');
-            new Chart(userDistributionCtx, {
-                type: 'pie',
-                data: {
-                    labels: ['Alumni', 'Employers', 'Staff'],
-                    datasets: [{
-                        data: [<?= $graduates_count ?>, <?= $employers_count ?>, <?= $staff_count ?>],
-                        backgroundColor: [
-                            'rgba(110, 3, 3, 0.8)',
-                            'rgba(255, 167, 0, 0.8)',
-                            'rgba(106, 13, 173, 0.8)'
-                        ],
-                        borderColor: [
-                            'rgba(110, 3, 3, 1)',
-                            'rgba(255, 167, 0, 1)',
-                            'rgba(106, 13, 173, 1)'
-                        ],
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'bottom',
-                            labels: {
-                                font: {
-                                    size: 10
+            const userDistributionCtx = document.getElementById('userDistributionChart')?.getContext('2d');
+            if (userDistributionCtx) {
+                new Chart(userDistributionCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: ['Alumni', 'Employers', 'Staff'],
+                        datasets: [{
+                            data: [<?= $graduates_count ?>, <?= $employers_count ?>, <?= $staff_count ?>],
+                            backgroundColor: [
+                                'rgba(110, 3, 3, 0.8)',
+                                'rgba(255, 167, 0, 0.8)',
+                                'rgba(106, 13, 173, 0.8)'
+                            ],
+                            borderColor: [
+                                'rgba(110, 3, 3, 1)',
+                                'rgba(255, 167, 0, 1)',
+                                'rgba(106, 13, 173, 1)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    font: {
+                                        size: 10
+                                    }
                                 }
-                            }
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    const label = context.label || '';
-                                    const value = context.raw || 0;
-                                    const total = <?= $users_count ?>;
-                                    const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-                                    return `${label}: ${value} (${percentage}%)`;
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const label = context.label || '';
+                                        const value = context.raw || 0;
+                                        const total = <?= $users_count ?>;
+                                        const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+                                        return `${label}: ${value} (${percentage}%)`;
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
+            }
             
             // Job Status Chart (Doughnut)
-            const jobStatusCtx = document.getElementById('jobStatusChart').getContext('2d');
-            const totalJobs = <?= array_sum($job_status_data) ?>;
-            new Chart(jobStatusCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Active', 'Pending', 'Rejected', 'Closed'],
-                    datasets: [{
-                        data: [
-                            <?= $job_status_data['active'] ?? 0 ?>,
-                            <?= $job_status_data['pending'] ?? 0 ?>,
-                            <?= $job_status_data['rejected'] ?? 0 ?>,
-                            <?= $job_status_data['closed'] ?? 0 ?>
-                        ],
-                        backgroundColor: [
-                            'rgba(31, 122, 17, 0.8)',
-                            'rgba(255, 167, 0, 0.8)',
-                            'rgba(211, 47, 47, 0.8)',
-                            'rgba(100, 100, 100, 0.8)'
-                        ],
-                        borderColor: [
-                            'rgba(31, 122, 17, 1)',
-                            'rgba(255, 167, 0, 1)',
-                            'rgba(211, 47, 47, 1)',
-                            'rgba(100, 100, 100, 1)'
-                        ],
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'bottom',
-                            labels: {
-                                font: {
-                                    size: 9
+            const jobStatusCtx = document.getElementById('jobStatusChart')?.getContext('2d');
+            const totalJobs = <?= $job_status_data['active'] + $job_status_data['pending'] + $job_status_data['rejected'] + $job_status_data['closed'] ?>;
+            if (jobStatusCtx) {
+                new Chart(jobStatusCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Active', 'Pending', 'Rejected', 'Closed'],
+                        datasets: [{
+                            data: [
+                                <?= $job_status_data['active'] ?? 0 ?>,
+                                <?= $job_status_data['pending'] ?? 0 ?>,
+                                <?= $job_status_data['rejected'] ?? 0 ?>,
+                                <?= $job_status_data['closed'] ?? 0 ?>
+                            ],
+                            backgroundColor: [
+                                'rgba(31, 122, 17, 0.8)',
+                                'rgba(255, 167, 0, 0.8)',
+                                'rgba(211, 47, 47, 0.8)',
+                                'rgba(100, 100, 100, 0.8)'
+                            ],
+                            borderColor: [
+                                'rgba(31, 122, 17, 1)',
+                                'rgba(255, 167, 0, 1)',
+                                'rgba(211, 47, 47, 1)',
+                                'rgba(100, 100, 100, 1)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    font: {
+                                        size: 9
+                                    }
                                 }
-                            }
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    const label = context.label || '';
-                                    const value = context.raw || 0;
-                                    const percentage = totalJobs > 0 ? Math.round((value / totalJobs) * 100) : 0;
-                                    return `${label}: ${value} (${percentage}%)`;
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const label = context.label || '';
+                                        const value = context.raw || 0;
+                                        const percentage = totalJobs > 0 ? Math.round((value / totalJobs) * 100) : 0;
+                                        return `${label}: ${value} (${percentage}%)`;
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
+            }
             
             // Pending Approvals Chart (Doughnut)
-            const pendingApprovalsCtx = document.getElementById('pendingApprovalsChart').getContext('2d');
+            const pendingApprovalsCtx = document.getElementById('pendingApprovalsChart')?.getContext('2d');
             const totalPending = <?= $pending_approvals ?>;
-            new Chart(pendingApprovalsCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Employers', 'Job Posts'],
-                    datasets: [{
-                        data: [<?= $pending_employers ?>, <?= $pending_jobs ?>],
-                        backgroundColor: [
-                            'rgba(255, 167, 0, 0.8)',
-                            'rgba(110, 3, 3, 0.8)'
-                        ],
-                        borderColor: [
-                            'rgba(255, 167, 0, 1)',
-                            'rgba(110, 3, 3, 1)'
-                        ],
-                        borderWidth: 1
-                    }]
+            if (pendingApprovalsCtx) {
+                new Chart(pendingApprovalsCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Employers', 'Job Posts'],
+                        datasets: [{
+                            data: [<?= $pending_employers ?>, <?= $pending_jobs ?>],
+                            backgroundColor: [
+                                'rgba(255, 167, 0, 0.8)',
+                                'rgba(110, 3, 3, 0.8)'
+                            ],
+                            borderColor: [
+                                'rgba(255, 167, 0, 1)',
+                                'rgba(110, 3, 3, 1)'
+                            ],
+                            borderWidth: 1
+                        }]
                 },
                 options: {
                     responsive: true,
@@ -2549,10 +3665,12 @@ function getNotificationPriority($notification) {
                     }
                 }
             });
-            
-            // Employment Rate Chart (Bar) - ONLY IF DATA EXISTS
-            <?php if (!empty($employment_rate_data)): ?>
-            const employmentRateCtx = document.getElementById('employmentRateChart').getContext('2d');
+        }
+        
+        // Employment Rate Chart (Bar) - ONLY IF DATA EXISTS
+        <?php if (!empty($employment_rate_data)): ?>
+        const employmentRateCtx = document.getElementById('employmentRateChart')?.getContext('2d');
+        if (employmentRateCtx) {
             new Chart(employmentRateCtx, {
                 type: 'bar',
                 data: {
@@ -2596,12 +3714,13 @@ function getNotificationPriority($notification) {
                     }
                 }
             });
-            <?php endif; ?>
-            
-            // Top Skills Chart (Horizontal Bar) - ONLY IF DATA EXISTS
-            <?php if (!empty($top_skills_chart)): ?>
-            const topSkillsCtx = document.getElementById('topSkillsChart').getContext('2d');
-            
+        }
+        <?php endif; ?>
+        
+        // Top Skills Chart (Horizontal Bar) - ONLY IF DATA EXISTS
+        <?php if (!empty($top_skills_chart)): ?>
+        const topSkillsCtx = document.getElementById('topSkillsChart')?.getContext('2d');
+        if (topSkillsCtx) {
             // Prepare data for the chart
             const skillNames = <?= json_encode(array_keys($top_skills_chart)) ?>;
             const skillCounts = <?= json_encode(array_values($top_skills_chart)) ?>;
@@ -2656,12 +3775,13 @@ function getNotificationPriority($notification) {
                     }
                 }
             });
-            <?php endif; ?>
-            
-            // Application Trends Chart (Line) - ONLY IF DATA EXISTS
-            <?php if (!empty($application_trends) && array_sum(array_column($application_trends, 'count')) > 0): ?>
-            const applicationTrendsCtx = document.getElementById('applicationTrendsChart').getContext('2d');
-            
+        }
+        <?php endif; ?>
+        
+        // Application Trends Chart (Line) - ONLY IF DATA EXISTS
+        <?php if (!empty($application_trends) && array_sum(array_column($application_trends, 'count')) > 0): ?>
+        const applicationTrendsCtx = document.getElementById('applicationTrendsChart')?.getContext('2d');
+        if (applicationTrendsCtx) {
             // Prepare data for the line chart
             const trendDates = <?= json_encode(array_column($application_trends, 'application_date')) ?>;
             const trendCounts = <?= json_encode(array_column($application_trends, 'count')) ?>;
@@ -2702,8 +3822,9 @@ function getNotificationPriority($notification) {
                     }
                 }
             });
-            <?php endif; ?>
-        }); 
+        }
+        <?php endif; ?>
+    }); 
     </script>
 </body>
 </html>

@@ -126,24 +126,31 @@ if (isset($_GET['getBarangays']) && isset($_GET['cityCode'])) {
 }
 
 // ============================================
-// FETCH COURSES AND JOB POSITIONS FROM DATABASE
+// ENHANCED COURSE AND DEPARTMENT FETCHING
 // ============================================
 $courses = [];
 $job_positions = [];
 $colleges = [];
 
 try {
-    // Fetch all active courses grouped by college
+    // ENHANCED: Fetch all active courses with proper grouping
     $courses_stmt = $conn->prepare("
-        SELECT course_id, course_code, course_name, course_college 
+        SELECT 
+            course_id, 
+            course_code, 
+            course_name, 
+            course_college,
+            course_description,
+            created_at
         FROM courses 
         WHERE is_active = TRUE 
-        ORDER BY course_college, course_name
+        ORDER BY course_college ASC, course_name ASC
     ");
     $courses_stmt->execute();
     $all_courses = $courses_stmt->fetchAll();
     
-    // Organize courses by college
+    // Organize courses by college with enhanced data
+    $college_counts = [];
     foreach ($all_courses as $course) {
         $college = $course['course_college'];
         if (!isset($courses[$college])) {
@@ -151,6 +158,28 @@ try {
             $colleges[] = $college;
         }
         $courses[$college][] = $course;
+        
+        // Track course count per college
+        if (!isset($college_counts[$college])) {
+            $college_counts[$college] = 0;
+        }
+        $college_counts[$college]++;
+    }
+    
+    // Sort colleges alphabetically
+    sort($colleges);
+    
+    // ENHANCED: Get course statistics for debugging/logging
+    $total_courses = count($all_courses);
+    $total_colleges = count($colleges);
+    error_log("[" . date('Y-m-d H:i:s') . "] graduate_form.php: Loaded $total_courses courses from $total_colleges colleges/departments");
+    
+    // Debug output if needed
+    if (ENVIRONMENT === 'development') {
+        error_log("Colleges found: " . implode(', ', $colleges));
+        foreach ($colleges as $college) {
+            error_log("$college: " . count($courses[$college]) . " courses");
+        }
     }
     
     // Fetch all active job categories
@@ -195,10 +224,14 @@ try {
     
 } catch (PDOException $e) {
     error_log("[" . date('Y-m-d H:i:s') . "] graduate_form.php: Error fetching dropdown data - " . $e->getMessage());
-    // Fallback to empty arrays if database query fails
+    
+    // ENHANCED: Better fallback with clear error message
     $courses = [];
     $job_positions = [];
     $colleges = [];
+    
+    // Log detailed error for debugging
+    error_log("[" . date('Y-m-d H:i:s') . "] graduate_form.php: Database error details - " . $e->getMessage());
 }
 
 // ============================================
@@ -1035,7 +1068,9 @@ ob_end_flush();
     
     /* Enhanced File Upload Styles */
     .photo-upload-section {
-      margin-top: 20px;
+      margin-top: 30px;
+      border-top: 1px solid #eee;
+      padding-top: 20px;
     }
     
     .photo-upload-title {
@@ -1786,6 +1821,62 @@ ob_end_flush();
                 </div>
               </div>
             </div>
+
+            <!-- Alumni ID Photo Upload Section - MOVED TO PERSONAL INFORMATION -->
+            <div class="photo-upload-section">
+              <h3 class="photo-upload-title">Alumni ID Verification <span class="required">*</span></h3>
+              <p class="form-text" style="margin-bottom: 15px;">Please upload clear photos of both sides of your Alumni ID for verification purposes.</p>
+              
+              <div class="photo-upload-grid">
+                <!-- Front Photo Upload -->
+                <div class="file-upload-card" id="fileUploadCardFront">
+                  <div class="file-upload-header">
+                    <div class="file-upload-icon">
+                      <i class="fas fa-id-card"></i>
+                    </div>
+                    <div class="file-upload-title">Front of Alumni ID</div>
+                  </div>
+                  <div class="file-upload-body" id="uploadBodyFront">
+                    <div class="file-upload-text">
+                      Upload a clear photo of the front side of your Alumni ID showing your photo and details.
+                    </div>
+                    <label for="alumni_id_photo_front" class="file-upload-btn">
+                      <i class="fas fa-upload"></i> Choose File
+                    </label>
+                    <div class="file-requirements">
+                      <i class="fas fa-info-circle"></i> Accepted formats: JPG, JPEG, PNG, GIF | Max size: <?php echo (MAX_FILE_SIZE / 1024 / 1024); ?>MB
+                    </div>
+                  </div>
+                  <input type="file" id="alumni_id_photo_front" name="alumni_id_photo_front" class="file-input" 
+                         accept="image/jpeg,image/jpg,image/png,image/gif" required>
+                  <div class="error-message" id="alumni_id_photo_front_error"></div>
+                </div>
+                
+                <!-- Back Photo Upload -->
+                <div class="file-upload-card" id="fileUploadCardBack">
+                  <div class="file-upload-header">
+                    <div class="file-upload-icon">
+                      <i class="fas fa-id-card-alt"></i>
+                    </div>
+                    <div class="file-upload-title">Back of Alumni ID</div>
+                  </div>
+                  <div class="file-upload-body" id="uploadBodyBack">
+                    <div class="file-upload-text">
+                      Upload a clear photo of the back side of your Alumni ID showing additional details.
+                    </div>
+                    <label for="alumni_id_photo_back" class="file-upload-btn">
+                      <i class="fas fa-upload"></i> Choose File
+                    </label>
+                    <div class="file-requirements">
+                      <i class="fas fa-info-circle"></i> Accepted formats: JPG, JPEG, PNG, GIF | Max size: <?php echo (MAX_FILE_SIZE / 1024 / 1024); ?>MB
+                    </div>
+                  </div>
+                  <input type="file" id="alumni_id_photo_back" name="alumni_id_photo_back" class="file-input" 
+                         accept="image/jpeg,image/jpg,image/png,image/gif" required>
+                  <div class="error-message" id="alumni_id_photo_back_error"></div>
+                </div>
+              </div>
+            </div>
           </div>
           
           <!-- Academic Information Section -->
@@ -1803,6 +1894,7 @@ ob_end_flush();
               <div class="error-message" id="alumni_number_error"></div>
             </div>
             
+            <!-- ENHANCED: Course Selection - KEEPING ORIGINAL UI BUT ENSURING ALL COURSES ARE LOADED -->
             <div class="form-group">
               <label class="form-label" for="degree">Degree/Course <span class="required">*</span></label>
               <select id="degree" name="degree" class="form-select" required>
@@ -1821,7 +1913,7 @@ ob_end_flush();
                     <?php endif; ?>
                   <?php endforeach; ?>
                 <?php else: ?>
-                  <!-- Fallback in case database query fails -->
+                  <!-- Fallback in case database query fails - This will be replaced by the PHP code above if courses exist -->
                   <optgroup label="College of Education (CoEd)">
                     <option value="BEEd">BEEd – Bachelor in Elementary Education</option>
                     <option value="BSEd">BSEd – Bachelor in Secondary Education</option>
@@ -1922,62 +2014,6 @@ ob_end_flush();
               <textarea id="summary" name="summary" class="form-textarea" 
                         placeholder="Briefly describe your career goals, and objectives..."><?php echo isset($form_data['summary']) ? htmlspecialchars($form_data['summary']) : ''; ?></textarea>
               <div class="form-text">Optional: Share your career aspirations and key skills</div>
-            </div>
-
-            <!-- Enhanced Alumni ID Photo Upload Section -->
-            <div class="photo-upload-section">
-              <h3 class="photo-upload-title">Alumni ID Verification <span class="required">*</span></h3>
-              <p class="form-text" style="margin-bottom: 15px;">Please upload clear photos of both sides of your Alumni ID for verification purposes.</p>
-              
-              <div class="photo-upload-grid">
-                <!-- Front Photo Upload -->
-                <div class="file-upload-card" id="fileUploadCardFront">
-                  <div class="file-upload-header">
-                    <div class="file-upload-icon">
-                      <i class="fas fa-id-card"></i>
-                    </div>
-                    <div class="file-upload-title">Front of Alumni ID</div>
-                  </div>
-                  <div class="file-upload-body" id="uploadBodyFront">
-                    <div class="file-upload-text">
-                      Upload a clear photo of the front side of your Alumni ID showing your photo and details.
-                    </div>
-                    <label for="alumni_id_photo_front" class="file-upload-btn">
-                      <i class="fas fa-upload"></i> Choose File
-                    </label>
-                    <div class="file-requirements">
-                      <i class="fas fa-info-circle"></i> Accepted formats: JPG, JPEG, PNG, GIF | Max size: <?php echo (MAX_FILE_SIZE / 1024 / 1024); ?>MB
-                    </div>
-                  </div>
-                  <input type="file" id="alumni_id_photo_front" name="alumni_id_photo_front" class="file-input" 
-                         accept="image/jpeg,image/jpg,image/png,image/gif" required>
-                  <div class="error-message" id="alumni_id_photo_front_error"></div>
-                </div>
-                
-                <!-- Back Photo Upload -->
-                <div class="file-upload-card" id="fileUploadCardBack">
-                  <div class="file-upload-header">
-                    <div class="file-upload-icon">
-                      <i class="fas fa-id-card-alt"></i>
-                    </div>
-                    <div class="file-upload-title">Back of Alumni ID</div>
-                  </div>
-                  <div class="file-upload-body" id="uploadBodyBack">
-                    <div class="file-upload-text">
-                      Upload a clear photo of the back side of your Alumni ID showing additional details.
-                    </div>
-                    <label for="alumni_id_photo_back" class="file-upload-btn">
-                      <i class="fas fa-upload"></i> Choose File
-                    </label>
-                    <div class="file-requirements">
-                      <i class="fas fa-info-circle"></i> Accepted formats: JPG, JPEG, PNG, GIF | Max size: <?php echo (MAX_FILE_SIZE / 1024 / 1024); ?>MB
-                    </div>
-                  </div>
-                  <input type="file" id="alumni_id_photo_back" name="alumni_id_photo_back" class="file-input" 
-                         accept="image/jpeg,image/jpg,image/png,image/gif" required>
-                  <div class="error-message" id="alumni_id_photo_back_error"></div>
-                </div>
-              </div>
             </div>
           </div>
         </div>

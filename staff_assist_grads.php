@@ -439,7 +439,7 @@ try {
     $year_filter = $_GET['year'] ?? 'all';
     $search_query = $_GET['search'] ?? '';
     
-    // MODIFIED: Build query to fetch ALL graduates (not just those needing assistance)
+    // Build query to fetch ALL graduates (not just those needing assistance)
     $query = "
         SELECT u.usr_id, u.usr_name, u.usr_email, g.grad_degree, g.grad_year_graduated,
                COUNT(p.port_id) as portfolio_items,
@@ -471,7 +471,7 @@ try {
         $params[':search'] = "%$search_query%";
     }
     
-    // MODIFIED: Remove filtering condition to show ALL graduates
+    // Remove filtering condition to show ALL graduates
     $query .= " GROUP BY u.usr_id
                 ORDER BY portfolio_items ASC, applications ASC";
     
@@ -629,9 +629,13 @@ try {
             // Format the details for display
             $view_message = "Viewing profile of: " . htmlspecialchars($grad_details['usr_name']);
             
-            // Get profile photo URL
+            // Get profile photo URL - FIXED: Line 831 error
             $grad_profile_photo = !empty($grad_details['usr_profile_photo']) 
-                ? htmlspecialchars($grad_details['usr_profile_photo']) 
+                ? (file_exists($grad_details['usr_profile_photo']) 
+                    ? $grad_details['usr_profile_photo'] 
+                    : (file_exists("uploads/profile_photos/" . $grad_details['usr_profile_photo']) 
+                        ? "uploads/profile_photos/" . $grad_details['usr_profile_photo'] 
+                        : 'https://ui-avatars.com/api/?name=' . urlencode($grad_details['usr_name']) . '&background=random'))
                 : 'https://ui-avatars.com/api/?name=' . urlencode($grad_details['usr_name']) . '&background=random';
             
             // Get job status display text and color
@@ -944,69 +948,40 @@ try {
         }
     }
     
-    // Define course options
-    $course_options = [
-        "BEEd",
-        "BECEd",
-        "BSNEd",
-        "BSEd",
-        "BSEd-Math",
-        "BSEd-Sci",
-        "BSEd-Eng",
-        "BSEd-Fil",
-        "BSEd-VE",
-        "BTLEd",
-        "BTLEd-IA",
-        "BTLEd-HE",
-        "BTLEd-ICT",
-        "BTVTEd",
-        "BTVTEd-AD",
-        "BTVTEd-AT",
-        "BTVTEd-FSMT",
-        "BTVTEd-ET",
-        "BTVTEd-ELXT",
-        "BTVTEd-GFDT",
-        "BTVTEd-WFT",
-        "BSCE",
-        "BSCpE",
-        "BSECE",
-        "BSEE",
-        "BSIE",
-        "BSME",
-        "BSMx",
-        "BSGD",
-        "BSTechM",
-        "BIT",
-        "BIT-AT",
-        "BIT-CvT",
-        "BIT-CosT",
-        "BIT-DT",
-        "BIT-ET",
-        "BIT-ELXT",
-        "BIT-FPST",
-        "BIT-FCM",
-        "BIT-GT",
-        "BIT-IDT",
-        "BIT-MST",
-        "BIT-PPT",
-        "BIT-RAC",
-        "BIT-WFT",
-        "BPA",
-        "BSHM",
-        "BSBA-MM",
-        "BSTM",
-        "BSIT",
-        "BSIS",
-        "BIT-CT",
-        "BAEL",
-        "BAL",
-        "BAF",
-        "BS Math",
-        "BS Stat",
-        "BS DevCom",
-        "BSPsy",
-        "BSN"
-    ];
+    // MODIFIED: Fetch courses from database and organize them by college/department
+    $courses_by_college = [];
+    $colleges = [];
+    try {
+        // Fetch all active courses from the database and organize by college
+        $courses_stmt = $conn->query("
+            SELECT course_id, course_code, course_name, course_college 
+            FROM courses 
+            WHERE is_active = TRUE 
+            ORDER BY course_college, course_name
+        ");
+        $all_courses = $courses_stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Organize courses by college
+        foreach ($all_courses as $course) {
+            $college = $course['course_college'];
+            if (!isset($courses_by_college[$college])) {
+                $courses_by_college[$college] = [];
+                $colleges[] = $college;
+            }
+            $courses_by_college[$college][] = $course;
+        }
+        
+        // If there are no courses in the database, use an empty array
+        if (empty($courses_by_college)) {
+            $courses_by_college = [];
+            $colleges = [];
+        }
+    } catch (PDOException $e) {
+        // If there's an error, log it and use an empty array
+        error_log("Error fetching courses: " . $e->getMessage());
+        $courses_by_college = [];
+        $colleges = [];
+    }
     
 } catch (PDOException $e) {
     die("Database Connection Failed: " . $e->getMessage());
@@ -3464,14 +3439,28 @@ function getStaffNotificationLink($notification) {
         </div>
       </div>
       
-      <!-- Course Filter -->
+      <!-- Course Filter - MODIFIED: Added college/department grouping -->
       <div class="filter-group">
         <label class="filter-label"><i class="fas fa-graduation-cap"></i> Course</label>
         <select class="filter-select" id="courseFilter" onchange="updateFilters()">
           <option value="all" <?= $course_filter === 'all' ? 'selected' : '' ?>>All Courses</option>
-          <?php foreach ($course_options as $course): ?>
-            <option value="<?= $course ?>" <?= $course_filter === $course ? 'selected' : '' ?>><?= $course ?></option>
-          <?php endforeach; ?>
+          <?php if (!empty($courses_by_college) && !empty($colleges)): ?>
+            <?php foreach ($colleges as $college): ?>
+              <?php if (isset($courses_by_college[$college]) && !empty($courses_by_college[$college])): ?>
+                <optgroup label="<?= htmlspecialchars($college) ?>">
+                  <?php foreach ($courses_by_college[$college] as $course): ?>
+                    <option value="<?= htmlspecialchars($course['course_name']) ?>" 
+                      <?= $course_filter === $course['course_name'] ? 'selected' : '' ?>>
+                      <?= htmlspecialchars($course['course_name']) ?>
+                    </option>
+                  <?php endforeach; ?>
+                </optgroup>
+              <?php endif; ?>
+            <?php endforeach; ?>
+          <?php else: ?>
+            <!-- NO HARDCODED FALLBACK - Database courses only -->
+            <option value="all" selected>No courses available in database</option>
+          <?php endif; ?>
         </select>
       </div>
       

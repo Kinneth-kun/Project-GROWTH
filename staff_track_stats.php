@@ -513,69 +513,61 @@ try {
         }
     }
     
-    // Define course options (same as in admin_portfolio.php)
-    $course_options = [
-        "BEEd",
-        "BECEd",
-        "BSNEd",
-        "BSEd",
-        "BSEd-Math",
-        "BSEd-Sci",
-        "BSEd-Eng",
-        "BSEd-Fil",
-        "BSEd-VE",
-        "BTLEd",
-        "BTLEd-IA",
-        "BTLEd-HE",
-        "BTLEd-ICT",
-        "BTVTEd",
-        "BTVTEd-AD",
-        "BTVTEd-AT",
-        "BTVTEd-FSMT",
-        "BTVTEd-ET",
-        "BTVTEd-ELXT",
-        "BTVTEd-GFDT",
-        "BTVTEd-WFT",
-        "BSCE",
-        "BSCpE",
-        "BSECE",
-        "BSEE",
-        "BSIE",
-        "BSME",
-        "BSMx",
-        "BSGD",
-        "BSTechM",
-        "BIT",
-        "BIT-AT",
-        "BIT-CvT",
-        "BIT-CosT",
-        "BIT-DT",
-        "BIT-ET",
-        "BIT-ELXT",
-        "BIT-FPST",
-        "BIT-FCM",
-        "BIT-GT",
-        "BIT-IDT",
-        "BIT-MST",
-        "BIT-PPT",
-        "BIT-RAC",
-        "BIT-WFT",
-        "BPA",
-        "BSHM",
-        "BSBA-MM",
-        "BSTM",
-        "BSIT",
-        "BSIS",
-        "BIT-CT",
-        "BAEL",
-        "BAL",
-        "BAF",
-        "BS Math",
-        "BS Stat",
-        "BS DevCom",
-        "BSPsy",
-        "BSN"
-    ];
+    // Fetch courses from database organized by college/department
+    $courses_by_college = [];
+    $colleges = [];
+    
+    try {
+        // Fetch all active courses grouped by college
+        $courses_stmt = $conn->prepare("
+            SELECT course_id, course_code, course_name, course_college 
+            FROM courses 
+            WHERE is_active = TRUE 
+            ORDER BY course_college, course_name
+        ");
+        $courses_stmt->execute();
+        $all_courses = $courses_stmt->fetchAll();
+        
+        // Organize courses by college
+        foreach ($all_courses as $course) {
+            $college = $course['course_college'];
+            if (!isset($courses_by_college[$college])) {
+                $courses_by_college[$college] = [];
+                $colleges[] = $college;
+            }
+            $courses_by_college[$college][] = $course;
+        }
+        
+        // If no courses found, use a default structure
+        if (empty($courses_by_college)) {
+            $courses_by_college = [
+                'College of Education (CoEd)' => [
+                    ['course_code' => 'BEEd', 'course_name' => 'BEEd – Bachelor in Elementary Education'],
+                    ['course_code' => 'BSEd', 'course_name' => 'BSEd – Bachelor in Secondary Education']
+                ],
+                'College of Engineering (CoE)' => [
+                    ['course_code' => 'BSCE', 'course_name' => 'BSCE – Bachelor of Science in Civil Engineering'],
+                    ['course_code' => 'BSECE', 'course_name' => 'BSECE – Bachelor of Science in Electronics Engineering']
+                ]
+            ];
+            $colleges = array_keys($courses_by_college);
+        }
+        
+    } catch (PDOException $e) {
+        error_log("Error fetching courses from database: " . $e->getMessage());
+        // Fallback to default structure if database query fails
+        $courses_by_college = [
+            'College of Education (CoEd)' => [
+                ['course_code' => 'BEEd', 'course_name' => 'BEEd – Bachelor in Elementary Education'],
+                ['course_code' => 'BSEd', 'course_name' => 'BSEd – Bachelor in Secondary Education']
+            ],
+            'College of Engineering (CoE)' => [
+                ['course_code' => 'BSCE', 'course_name' => 'BSCE – Bachelor of Science in Civil Engineering'],
+                ['course_code' => 'BSECE', 'course_name' => 'BSECE – Bachelor of Science in Electronics Engineering']
+            ]
+        ];
+        $colleges = array_keys($courses_by_college);
+    }
     
 } catch (PDOException $e) {
     die("Database Connection Failed: " . $e->getMessage());
@@ -2101,9 +2093,22 @@ function getStaffNotificationLink($notification) {
         <label class="filter-label"><i class="fas fa-graduation-cap"></i> Course</label>
         <select class="filter-select" id="courseFilter" onchange="updateFilters()">
           <option value="all" <?= $course_filter === 'all' ? 'selected' : '' ?>>All Courses</option>
-          <?php foreach ($course_options as $course): ?>
-            <option value="<?= $course ?>" <?= $course_filter === $course ? 'selected' : '' ?>><?= $course ?></option>
-          <?php endforeach; ?>
+          <?php if (!empty($courses_by_college) && !empty($colleges)): ?>
+            <?php foreach ($colleges as $college): ?>
+              <?php if (isset($courses_by_college[$college]) && !empty($courses_by_college[$college])): ?>
+                <optgroup label="<?= htmlspecialchars($college) ?>">
+                  <?php foreach ($courses_by_college[$college] as $course): ?>
+                    <option value="<?= htmlspecialchars($course['course_name']) ?>" <?= $course_filter === $course['course_name'] ? 'selected' : '' ?>>
+                      <?= htmlspecialchars($course['course_name']) ?>
+                    </option>
+                  <?php endforeach; ?>
+                </optgroup>
+              <?php endif; ?>
+            <?php endforeach; ?>
+          <?php else: ?>
+            <!-- Fallback in case no courses are found -->
+            <option value="">No courses available</option>
+          <?php endif; ?>
         </select>
       </div>
       
