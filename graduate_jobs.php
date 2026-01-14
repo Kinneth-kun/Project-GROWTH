@@ -156,7 +156,7 @@ try {
     }
     
     /**
-     * Calculate job match score based on skills and preferences - ENHANCED VERSION
+     * Calculate job match score based on skills and preferences - MODIFIED VERSION (No recency bonus)
      */
     function calculateJobMatchScore($job, $graduate_skills, $job_preference) {
         $score = 0;
@@ -171,7 +171,7 @@ try {
         );
         $score += ($preference_score * 0.5);
         
-        // 2. Skills matching (40% weight)
+        // 2. Skills matching (50% weight) - CHANGED from 40% to 50% to compensate for removed recency bonus
         $skills_score = 0;
         if (!empty($job['job_skills']) && !empty($graduate_skills)) {
             $job_skills = array_map('trim', explode(',', $job['job_skills']));
@@ -182,18 +182,9 @@ try {
             $match_percentage = count($matched_skills) / max(count($job_skills), 1);
             $skills_score = $match_percentage * 100;
         }
-        $score += ($skills_score * 0.4);
+        $score += ($skills_score * 0.5); // CHANGED from 0.4 to 0.5
         
-        // 3. Recency bonus (10% weight) - newer jobs get slight boost
-        $posted_date = new DateTime($job['job_created_at']);
-        $current_date = new DateTime();
-        $days_diff = $current_date->diff($posted_date)->days;
-        
-        if ($days_diff <= 7) {
-            $score += 10; // Posted within last week
-        } elseif ($days_diff <= 30) {
-            $score += 5; // Posted within last month
-        }
+        // RECENCY BONUS REMOVED - No longer adding points for recent jobs
         
         return min(round($score), $max_score);
     }
@@ -244,7 +235,7 @@ try {
     }
     
     /**
-     * Get skill-based job matches - NEW FUNCTION
+     * Get skill-based job matches - MODIFIED: Pure skill matching only
      */
     function getSkillBasedJobMatches($conn, $graduate_id, $limit = 6) {
         // Get graduate's skills
@@ -293,10 +284,10 @@ try {
         $jobs_stmt->execute();
         $matched_jobs = $jobs_stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Calculate match scores based on skill overlap
+        // Calculate match scores based purely on skill overlap - MODIFIED
         $scored_jobs = [];
         foreach ($matched_jobs as $job) {
-            $match_score = calculateSkillMatchScore($job, $graduate_skills);
+            $match_score = calculatePureSkillMatchScore($job, $graduate_skills);
             $job['match_score'] = $match_score;
             $scored_jobs[] = $job;
         }
@@ -310,9 +301,9 @@ try {
     }
     
     /**
-     * Calculate skill-based match score - NEW FUNCTION
+     * Calculate pure skill-based match score - MODIFIED VERSION (No preference/recency)
      */
-    function calculateSkillMatchScore($job, $graduate_skills) {
+    function calculatePureSkillMatchScore($job, $graduate_skills) {
         $score = 0;
         
         if (!empty($job['job_skills']) && !empty($graduate_skills)) {
@@ -323,18 +314,26 @@ try {
             $matched_skills = array_intersect($graduate_skills_lower, $job_skills_lower);
             $match_percentage = count($matched_skills) / max(count($job_skills), 1);
             $score = $match_percentage * 100;
+        } else if (!empty($job['job_skills'])) {
+            // If job has skills but graduate doesn't, score is 0
+            $score = 0;
         }
         
-        // Bonus for skills mentioned in title, description, or requirements
+        // Additional skill mentions in job content (small bonus)
         $content = strtolower($job['job_title'] . ' ' . $job['job_description'] . ' ' . $job['job_requirements']);
+        $bonus_points = 0;
         foreach ($graduate_skills as $skill) {
-            if (strpos($content, strtolower($skill)) !== false) {
-                $score += 5; // Small bonus for each skill mention
+            $skill_lower = strtolower($skill);
+            // Check if skill is mentioned in job content
+            if (strpos($content, $skill_lower) !== false) {
+                $bonus_points += 2; // Small bonus for each skill mention in content
             }
         }
         
-        // Cap at 100%
-        return min(round($score), 100);
+        // Add bonus points but cap at 100%
+        $score = min(round($score + $bonus_points), 100);
+        
+        return $score;
     }
     
     /**
@@ -388,7 +387,7 @@ try {
     $notificationsGenerated = generateGraduateNotifications($conn, $graduate_id, $graduate);
     $job_recommendations = getJobRecommendations($conn, $graduate_id, $graduate, 8);
     
-    // Get skill-based job matches - NEW: Get jobs based on graduate's skills
+    // Get skill-based job matches - MODIFIED: Pure skill matching only
     $skill_based_matches = getSkillBasedJobMatches($conn, $graduate_id, 8);
     $graduate_skills = getGraduateSkills($conn, $graduate_id);
     
@@ -2816,12 +2815,12 @@ function formatSalary($salary) {
         </div>
         <?php endif; ?>
         
-        <!-- NEW: Skill-based Job Matching Section -->
+        <!-- MODIFIED: Skill-based Job Matching Section - Pure Skill Matching Only -->
         <?php if (count($skill_based_matches) > 0): ?>
         <div class="skill-matching-section">
             <div class="matching-header">
                 <h2 class="matching-title">
-                    <i class="fas fa-code"></i> Skill-Based Job Matches
+                    <i class="fas fa-code"></i> Pure Skill-Based Job Matches
                 </h2>
                 <div class="match-stats">
                     <div class="stat-item">
@@ -2834,7 +2833,7 @@ function formatSalary($salary) {
             <?php if (!empty($graduate_skills)): ?>
             <div class="skills-display">
                 <div class="skills-title">
-                    <i class="fas fa-tags"></i> Your Skills:
+                    <i class="fas fa-tags"></i> Your Skills (for matching):
                 </div>
                 <div class="skills-container">
                     <?php foreach ($graduate_skills as $skill): ?>
@@ -2927,10 +2926,10 @@ function formatSalary($salary) {
             <div class="no-match-icon">
                 <i class="fas fa-code"></i>
             </div>
-            <h2 class="no-match-title">No Skill Matches Found</h2>
+            <h2 class="no-match-title">No Pure Skill Matches Found</h2>
             <p class="no-match-description">
                 We couldn't find any jobs that match your current skills. 
-                Consider expanding your skill set or checking back later for new opportunities.
+                This section shows only jobs where your skills directly match the required skills.
             </p>
             <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
                 <a href="graduate_portfolio.php" class="btn btn-apply" style="display: inline-block;">
@@ -2950,7 +2949,7 @@ function formatSalary($salary) {
             <h2 class="no-match-title">No Skills Added</h2>
             <p class="no-match-description">
                 You haven't added any skills to your portfolio yet. 
-                Add your skills to get personalized job matches based on your qualifications.
+                Add your skills to get pure skill-based job matches.
             </p>
             <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
                 <a href="graduate_portfolio.php" class="btn btn-apply" style="display: inline-block;">

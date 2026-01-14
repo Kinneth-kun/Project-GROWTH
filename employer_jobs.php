@@ -54,6 +54,45 @@ try {
             echo json_encode(['has_new' => $result['new_count'] > 0]);
             exit();
         }
+        
+        // Handle adding new domain via AJAX
+        if ($_POST['ajax_action'] === 'add_new_domain') {
+            $domain_name = trim($_POST['domain_name']);
+            $user_id = $_SESSION['user_id'];
+            
+            if (!empty($domain_name)) {
+                // Check if domain already exists
+                $check_stmt = $conn->prepare("SELECT * FROM industry_categories WHERE industry_name = :domain_name AND is_active = 1");
+                $check_stmt->bindParam(':domain_name', $domain_name);
+                $check_stmt->execute();
+                
+                if ($check_stmt->rowCount() > 0) {
+                    echo json_encode(['success' => false, 'message' => 'This domain already exists.']);
+                    exit();
+                }
+                
+                // Insert new custom domain
+                $insert_stmt = $conn->prepare("INSERT INTO industry_categories (industry_name, description, is_active, is_custom, added_by_user_id) 
+                                             VALUES (:domain_name, 'Custom domain added by employer', 1, 1, :user_id)");
+                $insert_stmt->bindParam(':domain_name', $domain_name);
+                $insert_stmt->bindParam(':user_id', $user_id);
+                
+                if ($insert_stmt->execute()) {
+                    $new_domain_id = $conn->lastInsertId();
+                    echo json_encode([
+                        'success' => true, 
+                        'message' => 'Domain added successfully!',
+                        'domain_id' => $new_domain_id,
+                        'domain_name' => $domain_name
+                    ]);
+                } else {
+                    echo json_encode(['success' => false, 'message' => 'Failed to add domain.']);
+                }
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Domain name cannot be empty.']);
+            }
+            exit();
+        }
     }
     
     // Check if user is logged in and is an employer
@@ -92,6 +131,12 @@ try {
         header("Location: login.php");
         exit();
     }
+
+    // Fetch available job domains from database
+    $domains_query = "SELECT industry_id, industry_name FROM industry_categories WHERE is_active = 1 ORDER BY industry_name";
+    $domains_stmt = $conn->prepare($domains_query);
+    $domains_stmt->execute();
+    $job_domains = $domains_stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // ENHANCED: Fetch ALL notifications with types and icons (removed LIMIT 8)
     $notification_query = "
@@ -2293,6 +2338,74 @@ function getFileTypeLabel($filename) {
             min-width: 200px;
         }
         
+        /* Enhanced Domain Select Styles */
+        .domain-select-container {
+            position: relative;
+        }
+        
+        .add-domain-btn {
+            background: linear-gradient(135deg, var(--green), #1a6b0a);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 15px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .add-domain-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(31, 122, 17, 0.3);
+        }
+        
+        /* New Domain Modal Styles */
+        #addDomainModal .modal {
+            max-width: 450px;
+        }
+        
+        .domain-input-group {
+            margin-bottom: 20px;
+        }
+        
+        .domain-input-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+        
+        .domain-input-group input:focus {
+            border-color: var(--primary-color);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(110, 3, 3, 0.1);
+        }
+        
+        .domain-alert {
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        
+        .domain-alert.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .domain-alert.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
         /* Responsive Design */
         @media (max-width: 1200px) {
             .dashboard-cards {
@@ -2955,6 +3068,7 @@ function getFileTypeLabel($filename) {
                                     <a href="employer_jobs.php?action=view_credentials&app_id=<?= $applicant['app_id'] ?>" class="btn-credentials">
                                         <i class="fas fa-file-alt"></i> Credentials
                                     </a>
+                                    <!-- FIXED: Added proper closing form tag -->
                                     <form method="POST" action="" class="applicant-status-form">
                                         <input type="hidden" name="action" value="update_app_status">
                                         <input type="hidden" name="app_id" value="<?= $applicant['app_id'] ?>">
@@ -3012,14 +3126,19 @@ function getFileTypeLabel($filename) {
                     
                     <div class="form-group">
                         <label for="jobDomain" class="form-label">Job Domain</label>
-                        <select id="jobDomain" name="jobDomain" class="form-select" required>
-                            <option value="">Select domain</option>
-                            <option value="Software Dev" <?= $edit_job_data['job_domain'] == 'Software Dev' ? 'selected' : '' ?>>Software Development</option>
-                            <option value="Finance" <?= $edit_job_data['job_domain'] == 'Finance' ? 'selected' : '' ?>>Finance</option>
-                            <option value="Healthcare" <?= $edit_job_data['job_domain'] == 'Healthcare' ? 'selected' : '' ?>>Healthcare</option>
-                            <option value="Education" <?= $edit_job_data['job_domain'] == 'Education' ? 'selected' : '' ?>>Education</option>
-                            <option value="Marketing" <?= $edit_job_data['job_domain'] == 'Marketing' ? 'selected' : '' ?>>Marketing</option>
-                        </select>
+                        <div class="domain-select-container">
+                            <select id="jobDomain" name="jobDomain" class="form-select" required>
+                                <option value="">Select domain</option>
+                                <?php foreach ($job_domains as $domain): ?>
+                                <option value="<?= htmlspecialchars($domain['industry_name']) ?>" <?= $edit_job_data['job_domain'] == $domain['industry_name'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($domain['industry_name']) ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button type="button" class="add-domain-btn" onclick="showAddDomainModal()">
+                                <i class="fas fa-plus"></i> Add New Domain
+                            </button>
+                        </div>
                     </div>
                 </div>
                 
@@ -3050,9 +3169,9 @@ function getFileTypeLabel($filename) {
                     <label class="form-label">Required Skills</label>
                     <div class="skills-container" id="skillsContainer">
                         <?php foreach ($edit_job_data['skills_array'] as $skill): ?>
-                        <div class="skill-tag">
+                        <div class="skill-tag" data-skill="<?= htmlspecialchars($skill) ?>">
                             <?= htmlspecialchars($skill) ?>
-                            <i class="fas fa-times" onclick="removeSkill('<?= htmlspecialchars($skill) ?>')"></i>
+                            <i class="fas fa-times" onclick="removeSkillTag(this)"></i>
                         </div>
                         <?php endforeach; ?>
                     </div>
@@ -3142,14 +3261,19 @@ function getFileTypeLabel($filename) {
                     
                     <div class="form-group">
                         <label for="jobDomain" class="form-label">Job Domain</label>
-                        <select id="jobDomain" name="jobDomain" class="form-select" required>
-                            <option value="">Select domain</option>
-                            <option value="Software Dev">Software Development</option>
-                            <option value="Finance">Finance</option>
-                            <option value="Healthcare">Healthcare</option>
-                            <option value="Education">Education</option>
-                            <option value="Marketing">Marketing</option>
-                        </select>
+                        <div class="domain-select-container">
+                            <select id="jobDomain" name="jobDomain" class="form-select" required>
+                                <option value="">Select domain</option>
+                                <?php foreach ($job_domains as $domain): ?>
+                                <option value="<?= htmlspecialchars($domain['industry_name']) ?>">
+                                    <?= htmlspecialchars($domain['industry_name']) ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button type="button" class="add-domain-btn" onclick="showAddDomainModal()">
+                                <i class="fas fa-plus"></i> Add New Domain
+                            </button>
+                        </div>
                     </div>
                 </div>
                 
@@ -3239,7 +3363,7 @@ function getFileTypeLabel($filename) {
                 </div>
                 
                 <div class="form-actions">
-                    <button type="reset" class="btn btn-secondary">Reset Form</button>
+                    <button type="reset" class="btn btn-secondary" id="resetFormBtn">Reset Form</button>
                     <button type="submit" class="btn btn-primary">Post Job</button>
                 </div>
             </form>
@@ -3376,6 +3500,27 @@ function getFileTypeLabel($filename) {
             <div class="modal-footer">
                 <button class="btn-modal btn-modal-cancel" onclick="hideModal('deleteModal')">Cancel</button>
                 <button class="btn-modal btn-modal-danger" id="confirmDeleteBtn">Delete Permanently</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add New Domain Modal -->
+    <div class="modal-overlay" id="addDomainModal">
+        <div class="modal">
+            <div class="modal-header">
+                <i class="fas fa-plus"></i>
+                <h3>Add New Job Domain</h3>
+            </div>
+            <div class="modal-body">
+                <div class="domain-alert" id="domainAlert"></div>
+                <div class="domain-input-group">
+                    <input type="text" id="newDomainName" placeholder="Enter new domain name (e.g., Artificial Intelligence)" maxlength="100">
+                </div>
+                <p style="color: #666; font-size: 0.9rem;">This domain will be available for all employers to use.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-modal btn-modal-cancel" onclick="hideModal('addDomainModal')">Cancel</button>
+                <button class="btn-modal btn-modal-confirm" id="confirmAddDomainBtn">Add Domain</button>
             </div>
         </div>
     </div>
@@ -3579,17 +3724,24 @@ function getFileTypeLabel($filename) {
         const skillsInput = document.getElementById('skillsInput');
         const newSkillInput = document.getElementById('newSkill');
         const addSkillBtn = document.getElementById('addSkillBtn');
+        const resetFormBtn = document.getElementById('resetFormBtn');
         let skills = [];
         
         <?php if ($editing_job): ?>
         // Initialize skills for edit mode
         skills = <?= json_encode($edit_job_data['skills_array']) ?>;
+        <?php else: ?>
+        // Initialize skills for create mode
+        skills = ['Python', 'JavaScript'];
+        // Add initial skills to container
+        skills.forEach(skill => addSkillTag(skill));
+        updateSkillsInput();
         <?php endif; ?>
         
         addSkillBtn.addEventListener('click', function() {
             const skill = newSkillInput.value.trim();
             if (skill && !skills.includes(skill)) {
-                addSkill(skill);
+                addSkillTag(skill);
                 skills.push(skill);
                 updateSkillsInput();
                 newSkillInput.value = '';
@@ -3597,30 +3749,51 @@ function getFileTypeLabel($filename) {
             }
         });
         
-        function addSkill(skill) {
+        function addSkillTag(skill) {
             const skillTag = document.createElement('div');
             skillTag.className = 'skill-tag';
+            skillTag.setAttribute('data-skill', skill);
             skillTag.innerHTML = `
                 ${skill}
-                <i class="fas fa-times" onclick="removeSkill('${skill}')"></i>
+                <i class="fas fa-times" onclick="removeSkillTag(this)"></i>
             `;
             skillsContainer.appendChild(skillTag);
         }
         
-        function removeSkill(skill) {
+        function removeSkillTag(iconElement) {
+            const skillTag = iconElement.closest('.skill-tag');
+            const skill = skillTag.getAttribute('data-skill');
+            
+            // Remove skill from array
             skills = skills.filter(s => s !== skill);
             updateSkillsInput();
-            const skillTags = skillsContainer.querySelectorAll('.skill-tag');
-            skillTags.forEach(tag => {
-                if (tag.textContent.includes(skill)) {
-                    tag.remove();
-                }
-            });
+            
+            // Remove skill tag from DOM
+            skillTag.remove();
             updatePreview();
         }
         
         function updateSkillsInput() {
-            skillsInput.value = skills.join(',');
+            if (skillsInput) {
+                skillsInput.value = skills.join(',');
+            }
+        }
+        
+        // Handle form reset to clear skills properly
+        if (resetFormBtn) {
+            resetFormBtn.addEventListener('click', function() {
+                // Clear skills array
+                skills = ['Python', 'JavaScript'];
+                
+                // Clear skills container
+                const skillTags = document.querySelectorAll('.skill-tag');
+                skillTags.forEach(tag => tag.remove());
+                
+                // Re-add default skills
+                skills.forEach(skill => addSkillTag(skill));
+                updateSkillsInput();
+                updatePreview();
+            });
         }
         
         // Format salary inputs as Philippine Peso
@@ -3721,7 +3894,12 @@ function getFileTypeLabel($filename) {
         
         function hideModal(modalId) {
             document.getElementById(modalId).classList.remove('active');
-            currentJobId = null;
+            if (modalId === 'addDomainModal') {
+                document.getElementById('newDomainName').value = '';
+                document.getElementById('domainAlert').style.display = 'none';
+            } else {
+                currentJobId = null;
+            }
         }
         
         function showCloseModal(jobId, jobTitle) {
@@ -3741,6 +3919,73 @@ function getFileTypeLabel($filename) {
             document.getElementById('deleteJobTitle').textContent = jobTitle;
             showModal('deleteModal');
         }
+        
+        function showAddDomainModal() {
+            showModal('addDomainModal');
+        }
+        
+        // Add Domain functionality
+        document.getElementById('confirmAddDomainBtn').addEventListener('click', function() {
+            const domainName = document.getElementById('newDomainName').value.trim();
+            const domainAlert = document.getElementById('domainAlert');
+            
+            if (!domainName) {
+                domainAlert.textContent = 'Please enter a domain name.';
+                domainAlert.className = 'domain-alert error';
+                domainAlert.style.display = 'block';
+                return;
+            }
+            
+            // Send AJAX request to add domain
+            const formData = new FormData();
+            formData.append('ajax_action', 'add_new_domain');
+            formData.append('domain_name', domainName);
+            
+            fetch('<?= $_SERVER['PHP_SELF'] ?>', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Add new option to select elements
+                    const selectOptions = `
+                        <option value="${data.domain_name}" selected>${data.domain_name}</option>
+                    `;
+                    
+                    // Update both create and edit job domain selects
+                    document.querySelectorAll('#jobDomain').forEach(select => {
+                        const newOption = document.createElement('option');
+                        newOption.value = data.domain_name;
+                        newOption.textContent = data.domain_name;
+                        newOption.selected = true;
+                        select.appendChild(newOption);
+                    });
+                    
+                    domainAlert.textContent = data.message;
+                    domainAlert.className = 'domain-alert success';
+                    domainAlert.style.display = 'block';
+                    
+                    // Update preview
+                    updatePreview();
+                    
+                    // Close modal after 2 seconds
+                    setTimeout(() => {
+                        hideModal('addDomainModal');
+                    }, 2000);
+                } else {
+                    domainAlert.textContent = data.message;
+                    domainAlert.className = 'domain-alert error';
+                    domainAlert.style.display = 'block';
+                }
+            })
+            .catch(error => {
+                console.error('Error adding domain:', error);
+                domainAlert.textContent = 'An error occurred. Please try again.';
+                domainAlert.className = 'domain-alert error';
+                domainAlert.style.display = 'block';
+            });
+        });
         
         // Modal event listeners
         document.getElementById('confirmCloseBtn').addEventListener('click', function() {
@@ -3828,13 +4073,7 @@ function getFileTypeLabel($filename) {
         window.onload = function() {
             <?php if (!$editing_job && !isset($view_applicants) && !isset($view_credentials)): ?>
             // Only add default skills if we're in the create job form
-            if (document.getElementById('skillsContainer') && document.getElementById('skillsContainer').children.length === 0) {
-                addSkill('Python');
-                addSkill('JavaScript');
-                skills = ['Python', 'JavaScript'];
-                updateSkillsInput();
-                updatePreview();
-            }
+            updatePreview();
             <?php endif; ?>
             
             // Show alerts if they exist
@@ -3852,6 +4091,22 @@ function getFileTypeLabel($filename) {
                 }, 5000);
             <?php endif; ?>
         };
+        
+        // Add Enter key functionality for new skill input
+        document.getElementById('newSkill')?.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('addSkillBtn').click();
+            }
+        });
+        
+        // Add Enter key functionality for new domain input
+        document.getElementById('newDomainName')?.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('confirmAddDomainBtn').click();
+            }
+        });
     </script>
 </body>
 </html>

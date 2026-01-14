@@ -3101,17 +3101,7 @@ function getNotificationPriority($notification) {
                             <div class="breakdown-label">Total Mentions</div>
                         </div>
                     </div>
-                    <?php if (!empty($skills_by_category)): ?>
-                    <div class="card-footer">
-                        <strong>Top Categories:</strong>
-                        <?php 
-                        $top_categories = array_slice($skills_by_category, 0, 3);
-                        foreach ($top_categories as $category): 
-                        ?>
-                            <span class="category-tag"><?= htmlspecialchars($category['skill_category']) ?> (<?= $category['count'] ?>)</span>
-                        <?php endforeach; ?>
-                    </div>
-                    <?php endif; ?>
+
                 <?php else: ?>
                     <div class="no-data-message">
                         <i class="fas fa-tools"></i>

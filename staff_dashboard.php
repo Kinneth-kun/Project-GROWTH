@@ -2166,8 +2166,8 @@ foreach ($job_status_data as $status) {
             label: 'Job Count',
             data: <?= json_encode($job_status_counts) ?>,
             backgroundColor: [
-              'rgba(255, 167, 0, 0.8)',
               'rgba(31, 122, 17, 0.8)',
+              'rgba(255, 167, 0, 0.8)',
               'rgba(211, 47, 47, 0.8)'
             ],
             borderColor: [

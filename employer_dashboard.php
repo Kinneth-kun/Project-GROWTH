@@ -234,40 +234,38 @@ try {
     $views_stmt->execute();
     $profile_views = $views_stmt->fetchColumn();
     
-    // Get profile views by month for chart
-    $views_by_month_stmt = $conn->prepare("
+    // CHANGED: Get profile views by day for chart (Last 30 days)
+    $views_by_day_stmt = $conn->prepare("
         SELECT 
-            YEAR(view_viewed_at) as year, 
-            MONTH(view_viewed_at) as month, 
+            DATE(view_viewed_at) as view_date, 
             COUNT(*) as count
         FROM employer_profile_views 
         WHERE view_emp_usr_id = :employer_id
-        AND view_viewed_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-        GROUP BY YEAR(view_viewed_at), MONTH(view_viewed_at)
-        ORDER BY year, month
+        AND view_viewed_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY DATE(view_viewed_at)
+        ORDER BY view_date ASC
     ");
-    $views_by_month_stmt->bindParam(':employer_id', $employer_id);
-    $views_by_month_stmt->execute();
-    $views_by_month = $views_by_month_stmt->fetchAll(PDO::FETCH_ASSOC);
+    $views_by_day_stmt->bindParam(':employer_id', $employer_id);
+    $views_by_day_stmt->execute();
+    $views_by_day = $views_by_day_stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Get applications by month for chart
-    $apps_by_month_stmt = $conn->prepare("
+    // CHANGED: Get applications by day for chart (Last 30 days)
+    $apps_by_day_stmt = $conn->prepare("
         SELECT 
-            YEAR(app_applied_at) as year, 
-            MONTH(app_applied_at) as month, 
+            DATE(app_applied_at) as app_date, 
             COUNT(*) as count
         FROM applications a
         JOIN jobs j ON a.app_job_id = j.job_id
         WHERE j.job_emp_usr_id = :employer_id
-        AND app_applied_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-        GROUP BY YEAR(app_applied_at), MONTH(app_applied_at)
-        ORDER BY year, month
+        AND app_applied_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY DATE(app_applied_at)
+        ORDER BY app_date ASC
     ");
-    $apps_by_month_stmt->bindParam(':employer_id', $employer_id);
-    $apps_by_month_stmt->execute();
-    $apps_by_month = $apps_by_month_stmt->fetchAll(PDO::FETCH_ASSOC);
+    $apps_by_day_stmt->bindParam(':employer_id', $employer_id);
+    $apps_by_day_stmt->execute();
+    $apps_by_day = $apps_by_day_stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Get top jobs by applications
+    // MODIFIED: Get top ACTIVE jobs by applications - NOW SHOWING ONLY ACTIVE JOBS
     $top_jobs_stmt = $conn->prepare("
         SELECT 
             j.job_title,
@@ -275,6 +273,7 @@ try {
         FROM jobs j
         LEFT JOIN applications a ON j.job_id = a.app_job_id
         WHERE j.job_emp_usr_id = :employer_id
+        AND j.job_status = 'active'  -- ADDED THIS CONDITION TO SHOW ONLY ACTIVE JOBS
         GROUP BY j.job_id, j.job_title
         ORDER BY application_count DESC
         LIMIT 5
@@ -531,20 +530,48 @@ try {
 // Prepare data for charts
 $month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// Prepare profile views data
+// CHANGED: Prepare profile views data for last 30 days
 $profile_views_data = [];
 $profile_views_labels = [];
-foreach ($views_by_month as $view) {
-    $profile_views_data[] = $view['count'];
-    $profile_views_labels[] = $month_names[$view['month'] - 1] . ' ' . $view['year'];
+
+// Generate dates for last 30 days
+$last_30_days = [];
+for ($i = 29; $i >= 0; $i--) {
+    $date = date('Y-m-d', strtotime("-$i days"));
+    $last_30_days[$date] = 0;
 }
 
-// Prepare applications data
+// Fill with actual data
+foreach ($views_by_day as $view) {
+    $last_30_days[$view['view_date']] = $view['count'];
+}
+
+// Prepare for chart
+foreach ($last_30_days as $date => $count) {
+    $profile_views_data[] = $count;
+    $profile_views_labels[] = date('M j', strtotime($date));
+}
+
+// CHANGED: Prepare applications data for last 30 days
 $applications_data = [];
 $applications_labels = [];
-foreach ($apps_by_month as $app) {
-    $applications_data[] = $app['count'];
-    $applications_labels[] = $month_names[$app['month'] - 1] . ' ' . $app['year'];
+
+// Generate dates for last 30 days
+$last_30_days_apps = [];
+for ($i = 29; $i >= 0; $i--) {
+    $date = date('Y-m-d', strtotime("-$i days"));
+    $last_30_days_apps[$date] = 0;
+}
+
+// Fill with actual data
+foreach ($apps_by_day as $app) {
+    $last_30_days_apps[$app['app_date']] = $app['count'];
+}
+
+// Prepare for chart
+foreach ($last_30_days_apps as $date => $count) {
+    $applications_data[] = $count;
+    $applications_labels[] = date('M j', strtotime($date));
 }
 
 // Prepare job status data
@@ -563,12 +590,13 @@ $application_status_data = [
     $app_stats['hired_applications'] ?? 0
 ];
 
-// Prepare top jobs data
+// MODIFIED: Prepare top ACTIVE jobs data - NOW ONLY SHOWING ACTIVE JOBS
 $top_jobs_labels = [];
 $top_jobs_data = [];
 $top_jobs_percentages = [];
 $total_apps_for_top_jobs = 0;
 
+// Calculate total applications for active top jobs
 foreach ($top_jobs as $job) {
     $total_apps_for_top_jobs += $job['application_count'];
 }
@@ -580,35 +608,64 @@ foreach ($top_jobs as $job) {
     $top_jobs_percentages[] = $percentage;
 }
 
-// Calculate percentages for tooltips
+// IMPROVED: Calculate percentages for tooltips with better humanization
 $total_jobs = $job_stats['total_jobs'] ?? 0;
-$job_percentages = [
-    'active' => $total_jobs > 0 ? round(($job_stats['active_jobs'] ?? 0) / $total_jobs * 100, 1) : 0,
-    'pending' => $total_jobs > 0 ? round(($job_stats['pending_jobs'] ?? 0) / $total_jobs * 100, 1) : 0,
-    'closed' => $total_jobs > 0 ? round(($job_stats['closed_jobs'] ?? 0) / $total_jobs * 100, 1) : 0,
-    'rejected' => $total_jobs > 0 ? round(($job_stats['rejected_jobs'] ?? 0) / $total_jobs * 100, 1) : 0,
-];
+$job_percentages = [];
+
+if ($total_jobs > 0) {
+    $job_percentages = [
+        'active' => round(($job_stats['active_jobs'] ?? 0) / $total_jobs * 100, 1),
+        'pending' => round(($job_stats['pending_jobs'] ?? 0) / $total_jobs * 100, 1),
+        'closed' => round(($job_stats['closed_jobs'] ?? 0) / $total_jobs * 100, 1),
+        'rejected' => round(($job_stats['rejected_jobs'] ?? 0) / $total_jobs * 100, 1),
+    ];
+} else {
+    $job_percentages = [
+        'active' => 0,
+        'pending' => 0,
+        'closed' => 0,
+        'rejected' => 0,
+    ];
+}
 
 $total_applications = $app_stats['total_applications'] ?? 0;
-$application_percentages = [
-    'pending' => $total_applications > 0 ? round(($app_stats['pending_applications'] ?? 0) / $total_applications * 100, 1) : 0,
-    'reviewed' => $total_applications > 0 ? round(($app_stats['reviewed_applications'] ?? 0) / $total_applications * 100, 1) : 0,
-    'qualified' => $total_applications > 0 ? round(($app_stats['qualified_applications'] ?? 0) / $total_applications * 100, 1) : 0,
-    'hired' => $total_applications > 0 ? round(($app_stats['hired_applications'] ?? 0) / $total_applications * 100, 1) : 0,
-];
+$application_percentages = [];
 
-// FIXED: Calculate application rate percentage - ensure it doesn't exceed 100%
+if ($total_applications > 0) {
+    $application_percentages = [
+        'pending' => round(($app_stats['pending_applications'] ?? 0) / $total_applications * 100, 1),
+        'reviewed' => round(($app_stats['reviewed_applications'] ?? 0) / $total_applications * 100, 1),
+        'qualified' => round(($app_stats['qualified_applications'] ?? 0) / $total_applications * 100, 1),
+        'hired' => round(($app_stats['hired_applications'] ?? 0) / $total_applications * 100, 1),
+    ];
+} else {
+    $application_percentages = [
+        'pending' => 0,
+        'reviewed' => 0,
+        'qualified' => 0,
+        'hired' => 0,
+    ];
+}
+
+// IMPROVED: Calculate application rate percentage with better humanization
 $active_jobs = $job_stats['active_jobs'] ?? 0;
 $total_apps = $app_stats['total_applications'] ?? 0;
 
-// Calculate average applications per job
-$avg_apps_per_job = $active_jobs > 0 ? $total_apps / $active_jobs : 0;
+// Calculate average applications per active job
+if ($active_jobs > 0) {
+    $avg_apps_per_job = $total_apps / $active_jobs;
+    // Humanize the application rate: cap at 100%, show as percentage
+    $application_rate = min(round($avg_apps_per_job * 20), 100); // Adjusted multiplier for better visualization
+} else {
+    $avg_apps_per_job = 0;
+    $application_rate = 0;
+}
 
-// Set a reasonable cap for application rate (max 100%)
-$application_rate = min(round($avg_apps_per_job * 10), 100);
-
-// Calculate hire rate percentage
-$hire_rate = ($app_stats['total_applications'] ?? 0) > 0 ? round(($app_stats['hired_applications'] ?? 0) / $app_stats['total_applications'] * 100) : 0;
+// IMPROVED: Calculate hire rate percentage with better humanization
+$hire_rate = 0;
+if (($app_stats['total_applications'] ?? 0) > 0) {
+    $hire_rate = round(($app_stats['hired_applications'] ?? 0) / $app_stats['total_applications'] * 100, 1);
+}
 
 // Function to get icon for staff communication type
 function getStaffCommIcon($type) {
@@ -1951,7 +2008,12 @@ function getStaffCommColor($type) {
                 </div>
                 <div class="card-value"><?= $app_stats['total_applications'] ?? 0 ?></div>
                 <div class="card-percentage positive-percentage">
-                    <i class="fas fa-chart-line"></i> <?= $application_rate ?>% Application Rate
+                    <i class="fas fa-chart-line"></i> 
+                    <?php if ($active_jobs > 0): ?>
+                        <?= round($total_apps / $active_jobs, 1) ?> apps per job
+                    <?php else: ?>
+                        No active jobs
+                    <?php endif; ?>
                 </div>
                 <div class="card-footer">Total Applications Received</div>
                 <div class="chart-container">
@@ -1967,7 +2029,7 @@ function getStaffCommColor($type) {
                 </div>
                 <div class="card-value"><?= $profile_views ?></div>
                 <div class="card-percentage positive-percentage">
-                    <i class="fas fa-trending-up"></i> Last 6 Months
+                    <i class="fas fa-trending-up"></i> Last 30 Days
                 </div>
                 <div class="card-footer">Company Profile Views by Alumni</div>
                 <div class="chart-container">
@@ -2012,21 +2074,21 @@ function getStaffCommColor($type) {
                     <h3 class="card-title">APPLICATIONS OVER TIME</h3>
                     <i class="fas fa-chart-line card-icon"></i>
                 </div>
-                <div class="card-value">Last 6 Months</div>
-                <div class="card-footer">Application Trends</div>
+                <div class="card-value">Last 30 Days</div>
+                <div class="card-footer">Daily Application Trends</div>
                 <div class="chart-container">
                     <canvas id="applicationsChart"></canvas>
                 </div>
             </div>
             
-            <!-- Top Jobs Card with Enhanced Horizontal Bar Chart -->
+            <!-- MODIFIED: Top ACTIVE Jobs Card with Enhanced Horizontal Bar Chart -->
             <div class="card">
                 <div class="card-header">
-                    <h3 class="card-title">TOP JOBS BY APPLICATIONS</h3>
+                    <h3 class="card-title">TOP ACTIVE JOBS BY APPLICATIONS</h3>
                     <i class="fas fa-star card-icon"></i>
                 </div>
                 <div class="card-value"><?= $total_apps_for_top_jobs ?></div>
-                <div class="card-footer">Applications for Top 5 Jobs</div>
+                <div class="card-footer">Applications for Top 5 Active Jobs</div>
                 <div class="chart-container">
                     <canvas id="topJobsChart"></canvas>
                 </div>
@@ -2218,7 +2280,7 @@ function getStaffCommColor($type) {
                                 }
                                 
                                 // Remove mark all button
-                                markAllReadBtn.remove();
+                                markAllBtn.remove();
                             }
                         })
                         .catch(error => {
@@ -2641,7 +2703,7 @@ function getStaffCommColor($type) {
                 }
             });
             
-            // Enhanced Profile Views Chart (Line)
+            // Enhanced Profile Views Chart (Line) - CHANGED TO 30 DAYS
             const profileViewsCtx = document.getElementById('profileViewsChart').getContext('2d');
             new Chart(profileViewsCtx, {
                 type: 'line',
@@ -2709,16 +2771,20 @@ function getStaffCommColor($type) {
                             },
                             ticks: {
                                 font: {
-                                    size: 10
+                                    size: 9
                                 },
-                                maxRotation: 45
+                                maxTicksLimit: 15,
+                                callback: function(value, index, values) {
+                                    // Show every 3rd label for better readability
+                                    return index % 3 === 0 ? this.getLabelForValue(value) : '';
+                                }
                             }
                         }
                     }
                 }
             });
             
-            // Enhanced Applications Over Time Chart (Line)
+            // Enhanced Applications Over Time Chart (Line) - CHANGED TO 30 DAYS
             const applicationsCtx = document.getElementById('applicationsChart').getContext('2d');
             new Chart(applicationsCtx, {
                 type: 'line',
@@ -2786,16 +2852,20 @@ function getStaffCommColor($type) {
                             },
                             ticks: {
                                 font: {
-                                    size: 10
+                                    size: 9
                                 },
-                                maxRotation: 45
+                                maxTicksLimit: 15,
+                                callback: function(value, index, values) {
+                                    // Show every 3rd label for better readability
+                                    return index % 3 === 0 ? this.getLabelForValue(value) : '';
+                                }
                             }
                         }
                     }
                 }
             });
             
-            // Enhanced Top Jobs Chart (Horizontal Bar)
+            // MODIFIED: Enhanced Top ACTIVE Jobs Chart (Horizontal Bar)
             const topJobsCtx = document.getElementById('topJobsChart').getContext('2d');
             
             // Generate professional gradient colors

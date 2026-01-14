@@ -1479,9 +1479,11 @@ $video_urls = [
         }
         
         .form-textarea {
-            min-height: 120px;
-            resize: vertical;
-        }
+    min-height: 80px; /* Reduced from 120px */
+    resize: vertical;
+    max-height: 150px; /* Limit height */
+    overflow-y: auto; /* Add scroll if needed */
+}
         
         .skills-container {
             display: flex;
@@ -1572,48 +1574,52 @@ $video_urls = [
         
         /* Modern Resume Preview Styles */
         .resume-preview {
-            background: white;
-            border: 1px solid #ddd;
-            padding: 40px 50px;
-            margin-top: 20px;
-            font-family: 'Arial', sans-serif;
-            line-height: 1.6;
-            font-size: 14px;
-            width: 210mm; /* A4 width */
-            min-height: 297mm; /* A4 height */
-            margin: 20px auto;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
-            position: relative;
-        }
+    background: white;
+    border: 1px solid #ddd;
+    padding: 30px 40px; /* Reduced padding */
+    margin-top: 20px;
+    font-family: 'Arial', sans-serif;
+    line-height: 1.5; /* Reduced line height */
+    font-size: 12px; /* Reduced font size */
+    width: 210mm; /* A4 width */
+    min-height: 297mm; /* A4 height */
+    max-height: 297mm; /* Limit to one page */
+    margin: 20px auto;
+    box-shadow: 0 0 20px rgba(0,0,0,0.1);
+    position: relative;
+    overflow: hidden; /* Hide overflow to ensure single page */
+    box-sizing: border-box; /* Include padding in dimensions */
+}
 
         /* Modern Header with Two Columns */
         .resume-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 3px solid #2c3e50;
-        }
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px; /* Reduced margin */
+    padding-bottom: 10px; /* Reduced padding */
+    border-bottom: 2px solid #2c3e50;
+}
 
         .resume-header-left {
             flex: 1;
         }
 
         .resume-name {
-            font-size: 32px;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 5px;
-            letter-spacing: 1px;
-        }
+    font-size: 24px; /* Reduced from 32px */
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 3px; /* Reduced margin */
+    letter-spacing: 0.5px; /* Reduced letter spacing */
+}
 
         .resume-title {
-            font-size: 18px;
-            color: #7f8c8d;
-            font-weight: 500;
-            margin-bottom: 15px;
-        }
+    font-size: 16px; /* Reduced from 18px */
+    color: #7f8c8d;
+    font-weight: 500;
+    margin-bottom: 10px; /* Reduced margin */
+}
+
 
         .resume-contact {
             display: flex;
@@ -1622,12 +1628,12 @@ $video_urls = [
         }
 
         .contact-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: #34495e;
-            font-size: 14px;
-        }
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #34495e;
+    font-size: 12px; /* Reduced from 14px */
+}
 
         .contact-item i {
             color: #3498db;
@@ -1646,20 +1652,23 @@ $video_urls = [
 
         /* Two Column Layout */
         .resume-content {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 30px;
-            margin-top: 20px;
-        }
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 20px; /* Reduced from 30px */
+    margin-top: 15px; /* Reduced from 20px */
+}
 
         .resume-main {
             padding-right: 20px;
             border-right: 2px solid #ecf0f1;
         }
 
-        .resume-sidebar {
-            padding-left: 10px;
-        }
+       .resume-sidebar {
+    padding-left: 10px;
+    max-height: 240mm; /* Limit height */
+    overflow-y: visible; /* Change from hidden to visible */
+}
+
 
         /* Section Styles */
         .resume-section {
@@ -1667,14 +1676,14 @@ $video_urls = [
         }
 
         .section-title {
-            font-size: 18px;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 15px;
-            padding-bottom: 8px;
-            border-bottom: 2px solid #3498db;
-            position: relative;
-        }
+    font-size: 16px; /* Reduced from 18px */
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 10px; /* Reduced from 15px */
+    padding-bottom: 5px; /* Reduced from 8px */
+    border-bottom: 2px solid #3498db;
+    position: relative;
+}
 
         .section-title::after {
             content: '';
@@ -1688,10 +1697,10 @@ $video_urls = [
 
         /* Experience and Education Items */
         .experience-item, .education-item {
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #ecf0f1;
-        }
+    margin-bottom: 15px; /* Reduced from 20px */
+    padding-bottom: 10px; /* Reduced from 15px */
+    border-bottom: 1px solid #ecf0f1;
+}
 
         .item-header {
             display: flex;
@@ -1773,22 +1782,34 @@ $video_urls = [
         }
 
         /* Personal Info in Sidebar */
-        .personal-info-item {
-            margin-bottom: 12px;
-            display: flex;
-            flex-direction: column;
-        }
+        /* Find the .personal-info-item class for siblings and modify it */
+.personal-info-item {
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 100%;
+}
+
+/* Add specific styling for siblings container */
+.personal-info-item.siblings {
+    margin-bottom: 10px;
+}
+
+.info-value {
+    color: #555;
+    font-size: 12px; /* Reduced from 14px */
+    line-height: 1.4;
+    word-break: break-word;
+    white-space: normal; /* Allow text to wrap */
+}
 
         .info-label {
             font-weight: bold;
             color: #2c3e50;
             font-size: 13px;
             margin-bottom: 3px;
-        }
-
-        .info-value {
-            color: #555;
-            font-size: 14px;
         }
 
         /* Career Hub Styles */
@@ -2059,9 +2080,12 @@ $video_urls = [
             }
             
             .resume-content {
-                grid-template-columns: 1fr;
-                gap: 20px;
-            }
+    display: grid;
+    grid-template-columns: 1.8fr 1.2fr; /* Adjusted ratio */
+    gap: 15px; /* Reduced further */
+    margin-top: 10px;
+}
+
             
             .resume-main {
                 padding-right: 0;
@@ -2721,11 +2745,14 @@ $video_urls = [
                             </div>
                             <?php endif; ?>
                             <?php if (!empty($resume_data['personal']['siblings'])): ?>
-                            <div class="personal-info-item">
-                                <div class="info-label">Siblings</div>
-                                <div class="info-value"><?= htmlspecialchars($resume_data['personal']['siblings']) ?></div>
-                            </div>
-                            <?php endif; ?>
+<div class="personal-info-item siblings">
+    <div class="info-label">Siblings</div>
+    <div class="info-value" style="font-size: 11px; line-height: 1.3; margin-top: 2px;">
+        <?= nl2br(htmlspecialchars($resume_data['personal']['siblings'])) ?>
+    </div>
+</div>
+<?php endif; ?>
+
                         </div>
                     </div>
                 </div>
@@ -3133,56 +3160,60 @@ $video_urls = [
         });
         
         function generatePDF() {
-            const { jsPDF } = window.jspdf;
-            if (!jsPDF) {
-                alert('PDF generation library not loaded. Please try again.');
-                return;
-            }
-            
-            const doc = new jsPDF('p', 'mm', 'a4');
-            
-            // Get resume preview element
-            const resumePreview = document.getElementById('resumePreview');
-            
-            if (!resumePreview) {
-                alert('Resume preview not found. Please generate a resume first.');
-                return;
-            }
-            
-            // Use html2canvas to capture the resume preview as an image
-            html2canvas(resumePreview, {
-                scale: 2, // Higher scale for better quality
-                useCORS: true,
-                logging: false
-            }).then(canvas => {
-                const imgData = canvas.toDataURL('image/jpeg', 1.0);
-                const imgWidth = 210; // A4 width in mm
-                const pageHeight = 295; // A4 height in mm
-                const imgHeight = canvas.height * imgWidth / canvas.width;
-                let heightLeft = imgHeight;
-                let position = 0;
-                
-                // Add first page
-                doc.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-                heightLeft -= pageHeight;
-                
-                // Add additional pages if needed
-                while (heightLeft >= 0) {
-                    position = heightLeft - imgHeight;
-                    doc.addPage();
-                    doc.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-                    heightLeft -= pageHeight;
-                }
-                
-                // Save the PDF
-                const fullName = resumePreview.querySelector('.resume-name').textContent;
-                const fileName = `${fullName.replace(/\s+/g, '_')}_Resume.pdf`;
-                doc.save(fileName);
-            }).catch(error => {
-                console.error('Error generating PDF:', error);
-                alert('Error generating PDF. Please try again.');
-            });
-        }
+    const { jsPDF } = window.jspdf;
+    if (!jsPDF) {
+        alert('PDF generation library not loaded. Please try again.');
+        return;
+    }
+    
+    const doc = new jsPDF('p', 'mm', 'a4');
+    
+    // Get resume preview element
+    const resumePreview = document.getElementById('resumePreview');
+    
+    if (!resumePreview) {
+        alert('Resume preview not found. Please generate a resume first.');
+        return;
+    }
+    
+    // Temporarily remove max-height constraint for PDF generation
+    const originalMaxHeight = resumePreview.style.maxHeight;
+    resumePreview.style.maxHeight = 'none';
+    resumePreview.style.overflow = 'visible';
+    
+    // Use html2canvas to capture the resume preview as an image
+    html2canvas(resumePreview, {
+        scale: 1.5, // Lower scale for smaller file size
+        useCORS: true,
+        logging: false,
+        width: 800, // Set specific width
+        height: 1131, // A4 aspect ratio (800 * sqrt(2))
+        windowWidth: 800,
+        windowHeight: 1131
+    }).then(canvas => {
+        // Restore original styles
+        resumePreview.style.maxHeight = originalMaxHeight;
+        resumePreview.style.overflow = 'hidden';
+        
+        const imgData = canvas.toDataURL('image/jpeg', 0.8); // Lower quality for smaller size
+        const imgWidth = 210; // A4 width in mm
+        const imgHeight = 297; // A4 height in mm
+        
+        // Add image to PDF - fit to single page
+        doc.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight, '', 'FAST');
+        
+        // Save the PDF
+        const fullName = resumePreview.querySelector('.resume-name').textContent;
+        const fileName = `${fullName.replace(/\s+/g, '_')}_Resume.pdf`;
+        doc.save(fileName);
+    }).catch(error => {
+        console.error('Error generating PDF:', error);
+        // Restore original styles on error
+        resumePreview.style.maxHeight = originalMaxHeight;
+        resumePreview.style.overflow = 'hidden';
+        alert('Error generating PDF. Please try again.');
+    });
+}
         
         // Resource Marking Functionality
         function markResourceAsRead(resourceId, element) {
