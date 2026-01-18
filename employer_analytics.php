@@ -17,6 +17,8 @@ try {
     $conn = new PDO("mysql:host=$host;dbname=$dbname", $username, $password);
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     
+    $employer_id = $_SESSION['user_id'];
+    
     // Handle marking notifications as read via AJAX
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
         $employer_id = $_SESSION['user_id'];
@@ -52,10 +54,169 @@ try {
                 exit();
             }
         }
+        
+        // Handle monthly report generation
+        if ($_POST['ajax_action'] === 'generate_monthly_report') {
+            $month = $_POST['month'];
+            $year = $_POST['year'];
+            
+            // Get month name
+            $month_name = date('F', mktime(0, 0, 0, $month, 1));
+            
+            // Calculate start and end dates
+            $start_date = "$year-$month-01";
+            $end_date = "$year-$month-" . date('t', strtotime($start_date));
+            
+            // Get total jobs posted in this month
+            $jobs_stmt = $conn->prepare("
+                SELECT 
+                    COUNT(*) as total_jobs,
+                    SUM(CASE WHEN job_status = 'active' THEN 1 ELSE 0 END) as active_jobs,
+                    SUM(CASE WHEN job_status = 'pending' THEN 1 ELSE 0 END) as pending_jobs,
+                    SUM(CASE WHEN job_status = 'closed' THEN 1 ELSE 0 END) as closed_jobs
+                FROM jobs 
+                WHERE job_emp_usr_id = :employer_id
+                AND DATE(job_created_at) BETWEEN :start_date AND :end_date
+            ");
+            $jobs_stmt->bindParam(':employer_id', $employer_id);
+            $jobs_stmt->bindParam(':start_date', $start_date);
+            $jobs_stmt->bindParam(':end_date', $end_date);
+            $jobs_stmt->execute();
+            $job_stats = $jobs_stmt->fetch(PDO::FETCH_ASSOC);
+            
+            // Get application statistics for this month
+            $applications_stmt = $conn->prepare("
+                SELECT 
+                    COUNT(*) as total_applications,
+                    SUM(CASE WHEN app_status = 'pending' THEN 1 ELSE 0 END) as pending_applications,
+                    SUM(CASE WHEN app_status = 'reviewed' THEN 1 ELSE 0 END) as reviewed_applications,
+                    SUM(CASE WHEN app_status = 'qualified' THEN 1 ELSE 0 END) as qualified_applications,
+                    SUM(CASE WHEN app_status = 'shortlisted' THEN 1 ELSE 0 END) as shortlisted_applications,
+                    SUM(CASE WHEN app_status = 'hired' THEN 1 ELSE 0 END) as hired_applications,
+                    SUM(CASE WHEN app_status = 'rejected' THEN 1 ELSE 0 END) as rejected_applications
+                FROM applications a
+                JOIN jobs j ON a.app_job_id = j.job_id
+                WHERE j.job_emp_usr_id = :employer_id
+                AND DATE(a.app_applied_at) BETWEEN :start_date AND :end_date
+            ");
+            $applications_stmt->bindParam(':employer_id', $employer_id);
+            $applications_stmt->bindParam(':start_date', $start_date);
+            $applications_stmt->bindParam(':end_date', $end_date);
+            $applications_stmt->execute();
+            $application_stats = $applications_stmt->fetch(PDO::FETCH_ASSOC);
+            
+            // Get top 5 jobs by applications
+            $top_jobs_stmt = $conn->prepare("
+                SELECT 
+                    j.job_title,
+                    COUNT(a.app_id) as application_count,
+                    SUM(CASE WHEN a.app_status = 'hired' THEN 1 ELSE 0 END) as hires
+                FROM jobs j
+                LEFT JOIN applications a ON j.job_id = a.app_job_id
+                WHERE j.job_emp_usr_id = :employer_id
+                AND DATE(j.job_created_at) BETWEEN :start_date AND :end_date
+                GROUP BY j.job_id
+                ORDER BY application_count DESC
+                LIMIT 5
+            ");
+            $top_jobs_stmt->bindParam(':employer_id', $employer_id);
+            $top_jobs_stmt->bindParam(':start_date', $start_date);
+            $top_jobs_stmt->bindParam(':end_date', $end_date);
+            $top_jobs_stmt->execute();
+            $top_jobs = $top_jobs_stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Calculate hire rates for top jobs
+            foreach ($top_jobs as &$job) {
+                $job['hire_rate'] = $job['application_count'] > 0 ? 
+                    min(round(($job['hires'] / $job['application_count']) * 100, 1), 100) : 0;
+            }
+            
+            // Get monthly trends (last 6 months)
+            $trends_stmt = $conn->prepare("
+                SELECT 
+                    DATE_FORMAT(j.job_created_at, '%Y-%m') as month,
+                    COUNT(DISTINCT j.job_id) as jobs_posted,
+                    COUNT(DISTINCT a.app_id) as applications_received
+                FROM jobs j
+                LEFT JOIN applications a ON j.job_id = a.app_job_id
+                WHERE j.job_emp_usr_id = :employer_id
+                AND j.job_created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
+                GROUP BY DATE_FORMAT(j.job_created_at, '%Y-%m')
+                ORDER BY month DESC
+            ");
+            $trends_stmt->bindParam(':employer_id', $employer_id);
+            $trends_stmt->execute();
+            $monthly_trends = $trends_stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Prepare the report data
+            $report_data = [
+                'month' => $month_name,
+                'year' => $year,
+                'job_stats' => $job_stats,
+                'application_stats' => $application_stats,
+                'top_jobs' => $top_jobs,
+                'monthly_trends' => $monthly_trends
+            ];
+            
+            echo json_encode([
+                'success' => true,
+                'report' => $report_data
+            ]);
+            exit();
+        }
+        
+        // Handle PDF download notification
+        if ($_POST['ajax_action'] === 'create_pdf_notification') {
+            $month = $_POST['month'];
+            $year = $_POST['year'];
+            $file_name = $_POST['file_name'];
+            
+            // Get month name
+            $month_name = date('F', mktime(0, 0, 0, $month, 1));
+            
+            // Create notification message
+            $notification_message = "PDF report '" . $file_name . "' has been downloaded successfully!";
+            
+            // Insert notification into database
+            $insert_notif_stmt = $conn->prepare("
+                INSERT INTO notifications (notif_usr_id, notif_message, notif_type, notif_is_read, notif_created_at)
+                VALUES (:employer_id, :message, 'system', 0, NOW())
+            ");
+            $insert_notif_stmt->bindParam(':employer_id', $employer_id);
+            $insert_notif_stmt->bindParam(':message', $notification_message);
+            $insert_notif_stmt->execute();
+            
+            // Get the inserted notification for response
+            $notif_id = $conn->lastInsertId();
+            
+            // Get notification details for response
+            $notif_stmt = $conn->prepare("
+                SELECT 
+                    n.notif_id,
+                    n.notif_usr_id,
+                    n.notif_message,
+                    n.notif_type,
+                    n.notif_is_read,
+                    n.notif_created_at,
+                    'fas fa-file-pdf' as notif_icon,
+                    '#d32f2f' as notif_color
+                FROM notifications n
+                WHERE n.notif_id = :notif_id
+            ");
+            $notif_stmt->bindParam(':notif_id', $notif_id);
+            $notif_stmt->execute();
+            $notification = $notif_stmt->fetch(PDO::FETCH_ASSOC);
+            
+            echo json_encode([
+                'success' => true,
+                'notification' => $notification,
+                'message' => 'Notification created successfully'
+            ]);
+            exit();
+        }
     }
     
     // Get employer data
-    $employer_id = $_SESSION['user_id'];
     $stmt = $conn->prepare("
         SELECT e.*, u.usr_name, u.usr_email, u.usr_phone, u.usr_profile_photo
         FROM employers e 
@@ -451,13 +612,12 @@ try {
     });
     $top_skills = array_slice($skills_data, 0, 8, true);
     
-    // 5. CANDIDATE SOURCE ANALYSIS (Profile Views)
+    // 5. CANDIDATE SOURCE ANALYSIS (Profile Views) - MODIFIED: Removed grad_job_preference
     $candidate_source_stmt = $conn->prepare("
         SELECT 
             u.usr_name as graduate_name,
             g.grad_degree,
             g.grad_year_graduated,
-            g.grad_job_preference,
             v.view_viewed_at,
             (SELECT COUNT(*) FROM applications a 
              WHERE a.app_grad_usr_id = v.view_grad_usr_id 
@@ -521,6 +681,9 @@ try {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Add jsPDF library for PDF generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
     <style>
         :root {
             --primary-color: #6e0303;
@@ -978,6 +1141,28 @@ try {
             padding-bottom: 10px;
         }
 
+        /* Monthly Report Button */
+        .monthly-report-btn {
+            background: linear-gradient(135deg, var(--primary-color), #8a0404);
+            color: white;
+            border: none;
+            border-radius: 30px;
+            padding: 12px 25px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 10px rgba(110, 3, 3, 0.2);
+        }
+        
+        .monthly-report-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(110, 3, 3, 0.3);
+        }
+
         /* Enhanced Dashboard Cards */
         .dashboard-cards {
             display: grid;
@@ -1281,6 +1466,264 @@ try {
             display: block;
         }
         
+        /* Monthly Report Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .report-modal {
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            width: 90%;
+            max-width: 900px;
+            max-height: 90vh;
+            transform: translateY(-20px);
+            transition: transform 0.3s ease;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .modal-overlay.active .report-modal {
+            transform: translateY(0);
+        }
+        
+        .modal-header {
+            padding: 20px 25px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: linear-gradient(135deg, var(--primary-color), #8a0404);
+            color: white;
+        }
+        
+        .modal-header h3 {
+            color: white;
+            font-size: 1.3rem;
+            font-weight: 600;
+            flex: 1;
+        }
+        
+        .close-modal {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .close-modal:hover {
+            transform: scale(1.1);
+        }
+        
+        .modal-body {
+            padding: 25px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        .modal-footer {
+            padding: 20px 25px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+        
+        .btn-modal {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        
+        .btn-modal-cancel {
+            background: linear-gradient(135deg, #e0e0e0, #d0d0d0);
+            color: #333;
+        }
+        
+        .btn-modal-cancel:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-modal-confirm {
+            background: linear-gradient(135deg, var(--blue), #0033cc);
+            color: white;
+        }
+        
+        .btn-modal-confirm:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 68, 255, 0.3);
+        }
+        
+        .btn-modal-download {
+            background: linear-gradient(135deg, var(--green), #1a6b0a);
+            color: white;
+        }
+        
+        .btn-modal-download:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(31, 122, 17, 0.3);
+        }
+        
+        /* Report Content Styles */
+        .report-content {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        
+        .report-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        
+        .report-title {
+            color: var(--primary-color);
+            font-size: 1.8rem;
+            margin-bottom: 10px;
+        }
+        
+        .report-subtitle {
+            color: #666;
+            font-size: 1rem;
+        }
+        
+        .report-section {
+            margin-bottom: 25px;
+        }
+        
+        .section-title {
+            color: var(--primary-color);
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .stats-grid-report {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card-report {
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border-left: 4px solid var(--secondary-color);
+        }
+        
+        .stat-value-report {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 5px;
+        }
+        
+        .stat-label-report {
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .application-status-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .status-card-report {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #eee;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+        
+        .status-value-report {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 8px;
+        }
+        
+        .status-label-report {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+        
+        .status-description-report {
+            font-size: 0.8rem;
+            color: #666;
+        }
+        
+        /* Loading Spinner for PDF Generation */
+        .pdf-loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: white;
+        }
+        
+        .pdf-loading.active {
+            display: flex;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: var(--secondary-color);
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
         /* Responsive Design */
         @media (max-width: 1200px) {
             .kpi-grid {
@@ -1293,6 +1736,14 @@ try {
             
             .chart-grid {
                 grid-template-columns: 1fr;
+            }
+            
+            .stats-grid-report {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .application-status-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
         
@@ -1364,6 +1815,14 @@ try {
             
             .tab {
                 padding: 15px;
+            }
+            
+            .stats-grid-report {
+                grid-template-columns: 1fr;
+            }
+            
+            .application-status-grid {
+                grid-template-columns: 1fr;
             }
         }
         
@@ -1520,9 +1979,12 @@ try {
             <p>Comprehensive insights into your hiring performance and candidate pipeline</p>
         </div>
 
-        <!-- Page Header -->
+        <!-- Page Header with Monthly Report Button -->
         <div class="page-header">
             <h1 class="page-title">Data Analytics</h1>
+            <button class="monthly-report-btn" id="monthlyReportBtn">
+                <i class="fas fa-file-alt"></i> Monthly Reports
+            </button>
         </div>
         
         <!-- Key Performance Indicators - Enhanced Single row layout -->
@@ -1641,7 +2103,7 @@ try {
             </div>
         </div>
 
-        <!-- Candidate Sources Tab -->
+        <!-- Candidate Sources Tab - MODIFIED: Removed Job Preference column -->
         <div class="tab-content" id="candidate-sources">
             <div class="chart-card">
                 <div class="chart-header">
@@ -1653,7 +2115,6 @@ try {
                             <th>Alumni Name</th>
                             <th>Degree</th>
                             <th>Graduation Year</th>
-                            <th>Job Preference</th>
                             <th>Viewed On</th>
                             <th>Status</th>
                         </tr>
@@ -1664,7 +2125,6 @@ try {
                             <td><?= htmlspecialchars($candidate['graduate_name']) ?></td>
                             <td><?= htmlspecialchars($candidate['grad_degree']) ?></td>
                             <td><?= htmlspecialchars($candidate['grad_year_graduated']) ?></td>
-                            <td><?= htmlspecialchars($candidate['grad_job_preference']) ?></td>
                             <td><?= date('M j, Y', strtotime($candidate['view_viewed_at'])) ?></td>
                             <td>
                                 <span class="status-badge <?= $candidate['has_applied'] ? 'status-qualified' : 'status-pending' ?>">
@@ -1679,7 +2139,83 @@ try {
         </div>
     </div>
 
+    <!-- PDF Loading Spinner -->
+    <div class="pdf-loading" id="pdfLoading">
+        <div class="spinner"></div>
+        <p>Generating PDF Report...</p>
+        <p>Please wait a moment</p>
+    </div>
+
+    <!-- Monthly Report Modal -->
+    <div class="modal-overlay" id="monthlyReportModal">
+        <div class="report-modal">
+            <div class="modal-header">
+                <i class="fas fa-file-alt"></i>
+                <h3>Monthly Recruitment Report</h3>
+                <button class="close-modal" onclick="hideModal('monthlyReportModal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="report-content" id="reportContent">
+                    <!-- Report content will be loaded here via AJAX -->
+                    <div class="report-header">
+                        <h2 class="report-title">Select a Month to Generate Report</h2>
+                        <p class="report-subtitle">Choose a month and year to view detailed recruitment statistics</p>
+                    </div>
+                    
+                    <div class="report-section">
+                        <div class="section-title">Select Report Period</div>
+                        <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+                            <div style="flex: 1;">
+                                <label for="reportMonth" style="display: block; margin-bottom: 8px; font-weight: 500;">Month</label>
+                                <select id="reportMonth" class="form-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+                                    <option value="1">January</option>
+                                    <option value="2">February</option>
+                                    <option value="3">March</option>
+                                    <option value="4">April</option>
+                                    <option value="5">May</option>
+                                    <option value="6">June</option>
+                                    <option value="7">July</option>
+                                    <option value="8">August</option>
+                                    <option value="9">September</option>
+                                    <option value="10">October</option>
+                                    <option value="11">November</option>
+                                    <option value="12">December</option>
+                                </select>
+                            </div>
+                            <div style="flex: 1;">
+                                <label for="reportYear" style="display: block; margin-bottom: 8px; font-weight: 500;">Year</label>
+                                <select id="reportYear" class="form-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+                                    <?php for ($y = date('Y'); $y >= 2020; $y--): ?>
+                                    <option value="<?= $y ?>" <?= $y == date('Y') ? 'selected' : '' ?>><?= $y ?></option>
+                                    <?php endfor; ?>
+                                </select>
+                            </div>
+                        </div>
+                        <button id="generateReportBtn" class="btn-modal btn-modal-confirm" style="width: 100%;">
+                            <i class="fas fa-chart-bar"></i> Generate Monthly Report
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-modal btn-modal-cancel" onclick="hideModal('monthlyReportModal')">Close</button>
+                <button class="btn-modal btn-modal-download" id="downloadReportBtn" style="display: none;">
+                    <i class="fas fa-download"></i> Download PDF
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // Store employer data in JavaScript for PDF generation
+        const employerData = {
+            name: "<?= addslashes($employer['usr_name']) ?>",
+            company: "<?= addslashes($employer['emp_company_name']) ?>",
+            email: "<?= addslashes($employer['usr_email']) ?>"
+        };
+
         // Enhanced Charts Configuration with professional styling
         const pipelineChart = new Chart(document.getElementById('pipelineChart'), {
             type: 'bar',
@@ -2186,6 +2722,784 @@ try {
                 });
             });
         });
+        
+        // Monthly Report Functionality
+        const monthlyReportBtn = document.getElementById('monthlyReportBtn');
+        const monthlyReportModal = document.getElementById('monthlyReportModal');
+        const generateReportBtn = document.getElementById('generateReportBtn');
+        const downloadReportBtn = document.getElementById('downloadReportBtn');
+        const pdfLoading = document.getElementById('pdfLoading');
+        const reportMonth = document.getElementById('reportMonth');
+        const reportYear = document.getElementById('reportYear');
+        
+        // Store current report data for PDF generation
+        let currentReportData = null;
+        
+        // Show monthly report modal
+        monthlyReportBtn.addEventListener('click', function() {
+            showModal('monthlyReportModal');
+        });
+        
+        // Generate monthly report
+        generateReportBtn.addEventListener('click', function() {
+            const month = reportMonth.value;
+            const year = reportYear.value;
+            
+            // Show loading state
+            generateReportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating Report...';
+            generateReportBtn.disabled = true;
+            
+            // Send AJAX request to generate report
+            const formData = new FormData();
+            formData.append('ajax_action', 'generate_monthly_report');
+            formData.append('month', month);
+            formData.append('year', year);
+            
+            fetch('<?= $_SERVER['PHP_SELF'] ?>', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentReportData = data.report;
+                    displayMonthlyReport(data.report);
+                    downloadReportBtn.style.display = 'inline-block';
+                } else {
+                    alert('Error generating report. Please try again.');
+                }
+            })
+            .catch(error => {
+                console.error('Error generating report:', error);
+                alert('Error generating report. Please try again.');
+            })
+            .finally(() => {
+                // Reset button state
+                generateReportBtn.innerHTML = '<i class="fas fa-chart-bar"></i> Generate Monthly Report';
+                generateReportBtn.disabled = false;
+            });
+        });
+        
+        // Download PDF report
+        downloadReportBtn.addEventListener('click', function() {
+            if (currentReportData) {
+                showPdfLoading();
+                setTimeout(() => {
+                    generatePDFReport(currentReportData);
+                }, 500);
+            }
+        });
+        
+        // Display monthly report
+        function displayMonthlyReport(report) {
+            const monthName = report.month;
+            const year = report.year;
+            const jobStats = report.job_stats;
+            const appStats = report.application_stats;
+            const topJobs = report.top_jobs;
+            const monthlyTrends = report.monthly_trends;
+            
+            // Format numbers with commas
+            function formatNumber(num) {
+                return num ? num.toLocaleString() : '0';
+            }
+            
+            // Calculate percentages
+            const pendingRate = appStats.total_applications > 0 ? 
+                Math.min((appStats.pending_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+            const reviewedRate = appStats.total_applications > 0 ? 
+                Math.min((appStats.reviewed_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+            const qualifiedRate = appStats.total_applications > 0 ? 
+                Math.min((appStats.qualified_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+            const shortlistedRate = appStats.total_applications > 0 ? 
+                Math.min((appStats.shortlisted_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+            const hiredRate = appStats.total_applications > 0 ? 
+                Math.min((appStats.hired_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+            const rejectedRate = appStats.total_applications > 0 ? 
+                Math.min((appStats.rejected_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+            
+            // Generate report HTML
+            const reportHTML = `
+                <div class="report-header">
+                    <h2 class="report-title">${monthName} ${year} Recruitment Report</h2>
+                    <p class="report-subtitle">Comprehensive analysis of job postings and applicant statistics</p>
+                    <p><strong>Generated:</strong> ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</p>
+                </div>
+                
+                <div class="report-section">
+                    <div class="section-title">Job Posting Statistics</div>
+                    <div class="stats-grid-report">
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${formatNumber(jobStats.total_jobs)}</div>
+                            <div class="stat-label-report">Total Jobs Posted</div>
+                        </div>
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${formatNumber(jobStats.active_jobs)}</div>
+                            <div class="stat-label-report">Active Jobs</div>
+                        </div>
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${formatNumber(jobStats.pending_jobs)}</div>
+                            <div class="stat-label-report">Pending Approval</div>
+                        </div>
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${formatNumber(jobStats.closed_jobs)}</div>
+                            <div class="stat-label-report">Closed Jobs</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="report-section">
+                    <div class="section-title">Application Statistics</div>
+                    <div class="stats-grid-report">
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${formatNumber(appStats.total_applications)}</div>
+                            <div class="stat-label-report">Total Applications</div>
+                        </div>
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${formatNumber(appStats.hired_applications)}</div>
+                            <div class="stat-label-report">Successful Hires</div>
+                        </div>
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${hiredRate}%</div>
+                            <div class="stat-label-report">Hire Rate</div>
+                        </div>
+                        <div class="stat-card-report">
+                            <div class="stat-value-report">${formatNumber(appStats.rejected_applications)}</div>
+                            <div class="stat-label-report">Rejected Applications</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="report-section">
+                    <div class="section-title">Application Status Breakdown</div>
+                    <div class="application-status-grid">
+                        <div class="status-card-report">
+                            <div class="status-value-report">${formatNumber(appStats.pending_applications)}</div>
+                            <div class="status-label-report">Pending Graduates</div>
+                            <div class="status-description-report">${pendingRate}% of total applications</div>
+                        </div>
+                        <div class="status-card-report">
+                            <div class="status-value-report">${formatNumber(appStats.reviewed_applications)}</div>
+                            <div class="status-label-report">Under Review</div>
+                            <div class="status-description-report">${reviewedRate}% of total applications</div>
+                        </div>
+                        <div class="status-card-report">
+                            <div class="status-value-report">${formatNumber(appStats.qualified_applications)}</div>
+                            <div class="status-label-report">Qualified Candidates</div>
+                            <div class="status-description-report">${qualifiedRate}% of total applications</div>
+                        </div>
+                        <div class="status-card-report">
+                            <div class="status-value-report">${formatNumber(appStats.shortlisted_applications)}</div>
+                            <div class="status-label-report">Shortlisted</div>
+                            <div class="status-description-report">${shortlistedRate}% of total applications</div>
+                        </div>
+                        <div class="status-card-report">
+                            <div class="status-value-report">${formatNumber(appStats.hired_applications)}</div>
+                            <div class="status-label-report">Hired</div>
+                            <div class="status-description-report">${hiredRate}% of total applications</div>
+                        </div>
+                        <div class="status-card-report">
+                            <div class="status-value-report">${formatNumber(appStats.rejected_applications)}</div>
+                            <div class="status-label-report">Rejected</div>
+                            <div class="status-description-report">${rejectedRate}% of total applications</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="report-section">
+                    <div class="section-title">Top 5 Performing Jobs</div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Job Title</th>
+                                <th>Applications</th>
+                                <th>Hires</th>
+                                <th>Hire Rate</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${topJobs.map(job => `
+                                <tr>
+                                    <td>${job.job_title}</td>
+                                    <td>${formatNumber(job.application_count)}</td>
+                                    <td>${formatNumber(job.hires)}</td>
+                                    <td><strong>${job.hire_rate}%</strong></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                
+                ${monthlyTrends.length > 0 ? `
+                <div class="report-section">
+                    <div class="section-title">Monthly Trends (Last 6 Months)</div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Month</th>
+                                <th>Jobs Posted</th>
+                                <th>Applications Received</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${monthlyTrends.map(trend => `
+                                <tr>
+                                    <td>${trend.month}</td>
+                                    <td>${formatNumber(trend.jobs_posted)}</td>
+                                    <td>${formatNumber(trend.applications_received)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ` : ''}
+                
+                <div class="report-section" style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 30px;">
+                    <div class="section-title">Key Insights</div>
+                    <ul style="list-style: none; padding: 0; margin: 0;">
+                        <li style="padding: 8px 0; border-bottom: 1px solid #eee;">
+                            <strong>📊 Recruitment Performance:</strong> 
+                            ${appStats.hired_applications > 0 ? 
+                                `Successfully hired ${appStats.hired_applications} candidates with a ${hiredRate}% hire rate.` : 
+                                'No hires recorded for this period.'}
+                        </li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #eee;">
+                            <strong>📈 Pipeline Health:</strong> 
+                            ${appStats.pending_applications > 0 ? 
+                                `${appStats.pending_applications} applications are pending review (${pendingRate}% of total).` : 
+                                'All applications have been processed.'}
+                        </li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #eee;">
+                            <strong>🎯 Quality Candidates:</strong> 
+                            ${appStats.qualified_applications > 0 ? 
+                                `${appStats.qualified_applications} candidates qualified for positions (${qualifiedRate}% of total).` : 
+                                'No qualified candidates identified.'}
+                        </li>
+                        <li style="padding: 8px 0;">
+                            <strong>📅 Monthly Activity:</strong> 
+                            Posted ${jobStats.total_jobs} jobs and received ${appStats.total_applications} applications in ${monthName} ${year}.
+                        </li>
+                    </ul>
+                </div>
+            `;
+            
+            document.getElementById('reportContent').innerHTML = reportHTML;
+        }
+        
+        // PDF Loading Functions
+        function showPdfLoading() {
+            pdfLoading.classList.add('active');
+        }
+        
+        function hidePdfLoading() {
+            setTimeout(() => {
+                pdfLoading.classList.remove('active');
+            }, 500);
+        }
+        
+        // Create system notification for PDF download
+        function createPdfNotification(fileName, month, year) {
+            const formData = new FormData();
+            formData.append('ajax_action', 'create_pdf_notification');
+            formData.append('file_name', fileName);
+            formData.append('month', month);
+            formData.append('year', year);
+            
+            fetch('<?= $_SERVER['PHP_SELF'] ?>', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.notification) {
+                    // Add the new notification to the notification dropdown
+                    addNotificationToDropdown(data.notification);
+                    
+                    // Update notification count
+                    updateNotificationCount(1);
+                }
+            })
+            .catch(error => {
+                console.error('Error creating notification:', error);
+            });
+        }
+        
+        // Add new notification to the dropdown
+        function addNotificationToDropdown(notification) {
+            const notificationDropdown = document.getElementById('notificationDropdown');
+            const noNotifications = notificationDropdown.querySelector('.no-notifications');
+            
+            // Remove "no notifications" message if it exists
+            if (noNotifications) {
+                noNotifications.remove();
+            }
+            
+            // Create notification HTML
+            const notificationHTML = `
+                <a href="employer_analytics.php" class="notification-link unread" data-notif-id="${notification.notif_id}">
+                    <div class="notification-item">
+                        <div class="notification-icon">
+                            <i class="${notification.notif_icon}" style="color: ${notification.notif_color}"></i>
+                        </div>
+                        <div class="notification-content">
+                            <div>
+                                <span class="notification-priority priority-medium"></span>
+                                ${notification.notif_message}
+                            </div>
+                            <div class="notification-time">
+                                Just now
+                            </div>
+                        </div>
+                    </div>
+                </a>
+            `;
+            
+            // Add notification to the top of the dropdown
+            const dropdownHeader = notificationDropdown.querySelector('.dropdown-header');
+            dropdownHeader.insertAdjacentHTML('afterend', notificationHTML);
+            
+            // Update notification count in header
+            const notificationCountSpan = notificationDropdown.querySelector('.dropdown-header').firstChild;
+            const currentCount = parseInt(notificationCountSpan.textContent.match(/\d+/)[0]);
+            notificationCountSpan.textContent = `Notifications (${currentCount + 1})`;
+            
+            // Add event listener for the new notification
+            const newNotificationLink = notificationDropdown.querySelector(`[data-notif-id="${notification.notif_id}"]`);
+            newNotificationLink.addEventListener('click', function(e) {
+                if (!this.classList.contains('unread')) return;
+                
+                const notifId = this.getAttribute('data-notif-id');
+                
+                // Send AJAX request to mark as read
+                const formData = new FormData();
+                formData.append('ajax_action', 'mark_notifications_read');
+                formData.append('notification_ids[]', notifId);
+                
+                fetch('<?= $_SERVER['PHP_SELF'] ?>', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        this.classList.remove('unread');
+                        updateNotificationCount(-1);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error marking notification as read:', error);
+                });
+            });
+        }
+        
+        // Update notification count badge
+        function updateNotificationCount(change) {
+            const notificationCount = document.getElementById('notificationCount');
+            if (notificationCount) {
+                const currentCount = parseInt(notificationCount.textContent);
+                const newCount = currentCount + change;
+                if (newCount > 0) {
+                    notificationCount.textContent = newCount;
+                } else {
+                    notificationCount.remove();
+                    const markAllBtn = document.getElementById('markAllRead');
+                    if (markAllBtn) markAllBtn.remove();
+                }
+            } else if (change > 0) {
+                // Create notification count badge if it doesn't exist
+                const notificationIcon = document.querySelector('.notification i');
+                const notificationCount = document.createElement('span');
+                notificationCount.className = 'notification-count';
+                notificationCount.id = 'notificationCount';
+                notificationCount.textContent = change;
+                notificationIcon.parentNode.appendChild(notificationCount);
+                
+                // Add "Mark all as read" button if it doesn't exist
+                const dropdownHeader = document.querySelector('.notification-dropdown .dropdown-header');
+                if (!dropdownHeader.querySelector('.mark-all-read')) {
+                    const markAllBtn = document.createElement('button');
+                    markAllBtn.className = 'mark-all-read';
+                    markAllBtn.id = 'markAllRead';
+                    markAllBtn.textContent = 'Mark all as read';
+                    markAllBtn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        const unreadNotifications = document.querySelectorAll('.notification-link.unread');
+                        const unreadIds = Array.from(unreadNotifications).map(item => 
+                            item.getAttribute('data-notif-id')
+                        );
+                        
+                        if (unreadIds.length > 0) {
+                            const formData = new FormData();
+                            formData.append('ajax_action', 'mark_notifications_read');
+                            formData.append('mark_all', 'true');
+                            
+                            fetch('<?= $_SERVER['PHP_SELF'] ?>', {
+                                method: 'POST',
+                                body: formData
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    unreadNotifications.forEach(item => {
+                                        item.classList.remove('unread');
+                                    });
+                                    
+                                    notificationCount.remove();
+                                    markAllBtn.remove();
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error marking notifications as read:', error);
+                            });
+                        }
+                    });
+                    dropdownHeader.appendChild(markAllBtn);
+                }
+            }
+        }
+        
+        // Generate PDF Report
+        function generatePDFReport(report) {
+            try {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF({
+                    orientation: 'portrait',
+                    unit: 'mm',
+                    format: 'a4'
+                });
+                
+                // Get report data
+                const monthName = report.month;
+                const year = report.year;
+                const jobStats = report.job_stats;
+                const appStats = report.application_stats;
+                const topJobs = report.top_jobs;
+                const monthlyTrends = report.monthly_trends;
+                
+                // Format numbers with commas
+                function formatNumber(num) {
+                    return num ? num.toLocaleString() : '0';
+                }
+                
+                // Calculate percentages
+                const pendingRate = appStats.total_applications > 0 ? 
+                    Math.min((appStats.pending_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+                const reviewedRate = appStats.total_applications > 0 ? 
+                    Math.min((appStats.reviewed_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+                const qualifiedRate = appStats.total_applications > 0 ? 
+                    Math.min((appStats.qualified_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+                const shortlistedRate = appStats.total_applications > 0 ? 
+                    Math.min((appStats.shortlisted_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+                const hiredRate = appStats.total_applications > 0 ? 
+                    Math.min((appStats.hired_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+                const rejectedRate = appStats.total_applications > 0 ? 
+                    Math.min((appStats.rejected_applications / appStats.total_applications) * 100, 100).toFixed(1) : 0;
+                
+                // Set document properties
+                doc.setProperties({
+                    title: `${monthName} ${year} Recruitment Report - ${employerData.company}`,
+                    subject: 'Monthly Recruitment Analytics',
+                    author: 'CTU-PESO System',
+                    keywords: 'recruitment, analytics, report, hiring, applications',
+                    creator: 'CTU-PESO Analytics Dashboard'
+                });
+                
+                // Add header
+                doc.setFontSize(24);
+                doc.setTextColor(110, 3, 3);
+                doc.setFont('helvetica', 'bold');
+                doc.text('Monthly Recruitment Report', 105, 20, { align: 'center' });
+                
+                doc.setFontSize(14);
+                doc.setTextColor(0, 0, 0);
+                doc.setFont('helvetica', 'normal');
+                doc.text(`${monthName} ${year}`, 105, 30, { align: 'center' });
+                
+                doc.setFontSize(12);
+                doc.text(employerData.company, 105, 38, { align: 'center' });
+                
+                // Add generated date
+                doc.setFontSize(10);
+                doc.setTextColor(100, 100, 100);
+                doc.text(`Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 105, 45, { align: 'center' });
+                
+                // Add CTU-PESO Logo/Text
+                doc.setFontSize(10);
+                doc.setTextColor(110, 3, 3);
+                doc.text('CTU-PESO Recruitment Analytics System', 105, 55, { align: 'center' });
+                
+                let yPos = 65;
+                
+                // Executive Summary Section
+                doc.setFontSize(16);
+                doc.setTextColor(110, 3, 3);
+                doc.setFont('helvetica', 'bold');
+                doc.text('Executive Summary', 20, yPos);
+                yPos += 10;
+                
+                doc.setFontSize(11);
+                doc.setTextColor(0, 0, 0);
+                doc.setFont('helvetica', 'normal');
+                
+                // Summary stats in two columns
+                const summaryData = [
+                    [`Total Jobs Posted: ${formatNumber(jobStats.total_jobs)}`, `Active Jobs: ${formatNumber(jobStats.active_jobs)}`],
+                    [`Total Applications: ${formatNumber(appStats.total_applications)}`, `Successful Hires: ${formatNumber(appStats.hired_applications)}`],
+                    [`Overall Hire Rate: ${hiredRate}%`, `Pending Applications: ${formatNumber(appStats.pending_applications)}`]
+                ];
+                
+                summaryData.forEach(row => {
+                    doc.text(row[0], 20, yPos);
+                    doc.text(row[1], 110, yPos);
+                    yPos += 7;
+                });
+                
+                yPos += 5;
+                
+                // Job Posting Statistics
+                if (yPos > 250) {
+                    doc.addPage();
+                    yPos = 20;
+                }
+                
+                doc.setFontSize(14);
+                doc.setTextColor(110, 3, 3);
+                doc.setFont('helvetica', 'bold');
+                doc.text('Job Posting Statistics', 20, yPos);
+                yPos += 10;
+                
+                // Create job stats table
+                const jobStatsTable = {
+                    head: [['Metric', 'Count']],
+                    body: [
+                        ['Total Jobs Posted', formatNumber(jobStats.total_jobs)],
+                        ['Active Job Postings', formatNumber(jobStats.active_jobs)],
+                        ['Pending Approval', formatNumber(jobStats.pending_jobs)],
+                        ['Closed Jobs', formatNumber(jobStats.closed_jobs)]
+                    ]
+                };
+                
+                doc.autoTable({
+                    startY: yPos,
+                    head: jobStatsTable.head,
+                    body: jobStatsTable.body,
+                    theme: 'grid',
+                    headStyles: { fillColor: [110, 3, 3], textColor: [255, 255, 255], fontStyle: 'bold' },
+                    alternateRowStyles: { fillColor: [245, 245, 245] },
+                    margin: { left: 20, right: 20 }
+                });
+                
+                yPos = doc.lastAutoTable.finalY + 10;
+                
+                // Application Statistics
+                if (yPos > 250) {
+                    doc.addPage();
+                    yPos = 20;
+                }
+                
+                doc.setFontSize(14);
+                doc.setTextColor(110, 3, 3);
+                doc.setFont('helvetica', 'bold');
+                doc.text('Application Statistics', 20, yPos);
+                yPos += 10;
+                
+                // Create application stats table
+                const appStatsTable = {
+                    head: [['Status', 'Count', 'Percentage']],
+                    body: [
+                        ['Total Applications', formatNumber(appStats.total_applications), '100%'],
+                        ['Pending Review', formatNumber(appStats.pending_applications), `${pendingRate}%`],
+                        ['Under Review', formatNumber(appStats.reviewed_applications), `${reviewedRate}%`],
+                        ['Shortlisted', formatNumber(appStats.shortlisted_applications), `${shortlistedRate}%`],
+                        ['Qualified', formatNumber(appStats.qualified_applications), `${qualifiedRate}%`],
+                        ['Hired', formatNumber(appStats.hired_applications), `${hiredRate}%`],
+                        ['Rejected', formatNumber(appStats.rejected_applications), `${rejectedRate}%`]
+                    ]
+                };
+                
+                doc.autoTable({
+                    startY: yPos,
+                    head: appStatsTable.head,
+                    body: appStatsTable.body,
+                    theme: 'grid',
+                    headStyles: { fillColor: [110, 3, 3], textColor: [255, 255, 255], fontStyle: 'bold' },
+                    alternateRowStyles: { fillColor: [245, 245, 245] },
+                    margin: { left: 20, right: 20 },
+                    columnStyles: {
+                        0: { cellWidth: 70 },
+                        1: { cellWidth: 40 },
+                        2: { cellWidth: 40 }
+                    }
+                });
+                
+                yPos = doc.lastAutoTable.finalY + 10;
+                
+                // Top Performing Jobs
+                if (topJobs.length > 0) {
+                    if (yPos > 250) {
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    
+                    doc.setFontSize(14);
+                    doc.setTextColor(110, 3, 3);
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Top Performing Jobs', 20, yPos);
+                    yPos += 10;
+                    
+                    // Create top jobs table
+                    const topJobsTable = {
+                        head: [['Job Title', 'Applications', 'Hires', 'Hire Rate']],
+                        body: topJobs.map(job => [
+                            job.job_title.length > 40 ? job.job_title.substring(0, 37) + '...' : job.job_title,
+                            formatNumber(job.application_count),
+                            formatNumber(job.hires),
+                            `${job.hire_rate}%`
+                        ])
+                    };
+                    
+                    doc.autoTable({
+                        startY: yPos,
+                        head: topJobsTable.head,
+                        body: topJobsTable.body,
+                        theme: 'grid',
+                        headStyles: { fillColor: [110, 3, 3], textColor: [255, 255, 255], fontStyle: 'bold' },
+                        alternateRowStyles: { fillColor: [245, 245, 245] },
+                        margin: { left: 20, right: 20 },
+                        columnStyles: {
+                            0: { cellWidth: 80 },
+                            1: { cellWidth: 30 },
+                            2: { cellWidth: 25 },
+                            3: { cellWidth: 25 }
+                        }
+                    });
+                    
+                    yPos = doc.lastAutoTable.finalY + 10;
+                }
+                
+                // Monthly Trends
+                if (monthlyTrends.length > 0) {
+                    if (yPos > 250) {
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    
+                    doc.setFontSize(14);
+                    doc.setTextColor(110, 3, 3);
+                    doc.setFont('helvetica', 'bold');
+                    doc.text('Monthly Trends (Last 6 Months)', 20, yPos);
+                    yPos += 10;
+                    
+                    // Create trends table
+                    const trendsTable = {
+                        head: [['Month', 'Jobs Posted', 'Applications Received']],
+                        body: monthlyTrends.map(trend => [
+                            trend.month,
+                            formatNumber(trend.jobs_posted),
+                            formatNumber(trend.applications_received)
+                        ])
+                    };
+                    
+                    doc.autoTable({
+                        startY: yPos,
+                        head: trendsTable.head,
+                        body: trendsTable.body,
+                        theme: 'grid',
+                        headStyles: { fillColor: [110, 3, 3], textColor: [255, 255, 255], fontStyle: 'bold' },
+                        alternateRowStyles: { fillColor: [245, 245, 245] },
+                        margin: { left: 20, right: 20 }
+                    });
+                    
+                    yPos = doc.lastAutoTable.finalY + 10;
+                }
+                
+                // Key Insights
+                if (yPos > 250) {
+                    doc.addPage();
+                    yPos = 20;
+                }
+                
+                doc.setFontSize(14);
+                doc.setTextColor(110, 3, 3);
+                doc.setFont('helvetica', 'bold');
+                doc.text('Key Insights & Recommendations', 20, yPos);
+                yPos += 10;
+                
+                doc.setFontSize(11);
+                doc.setTextColor(0, 0, 0);
+                doc.setFont('helvetica', 'normal');
+                
+                const insights = [
+                    `• Posted ${jobStats.total_jobs} jobs and received ${appStats.total_applications} applications in ${monthName} ${year}`,
+                    `• Successfully hired ${appStats.hired_applications} candidates with a ${hiredRate}% hire rate`,
+                    `• ${appStats.pending_applications} applications pending review (${pendingRate}% of total)`,
+                    appStats.qualified_applications > 0 ? 
+                        `• ${appStats.qualified_applications} candidates qualified for positions (${qualifiedRate}% of total)` : 
+                        '• No qualified candidates identified this period',
+                    `• Active job postings: ${jobStats.active_jobs} | Pending approval: ${jobStats.pending_jobs} | Closed: ${jobStats.closed_jobs}`
+                ];
+                
+                insights.forEach(insight => {
+                    if (yPos > 280) {
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    doc.text(insight, 25, yPos);
+                    yPos += 7;
+                });
+                
+                // Add footer on each page
+                const pageCount = doc.internal.getNumberOfPages();
+                for (let i = 1; i <= pageCount; i++) {
+                    doc.setPage(i);
+                    doc.setFontSize(9);
+                    doc.setTextColor(100, 100, 100);
+                    doc.text(`Page ${i} of ${pageCount}`, 105, doc.internal.pageSize.height - 10, { align: 'center' });
+                    doc.text('CTU-PESO Recruitment Analytics System', 20, doc.internal.pageSize.height - 10);
+                    doc.text(`© ${new Date().getFullYear()} Cebu Technological University`, doc.internal.pageSize.width - 20, doc.internal.pageSize.height - 10, { align: 'right' });
+                }
+                
+                // Save the PDF
+                const fileName = `CTU_PESO_Recruitment_Report_${monthName}_${year}_${employerData.company.replace(/[^a-z0-9]/gi, '_')}.pdf`;
+                doc.save(fileName);
+                
+                // Hide loading spinner
+                hidePdfLoading();
+                
+                // Create system notification instead of alert
+                createPdfNotification(fileName, reportMonth.value, reportYear.value);
+                
+            } catch (error) {
+                console.error('Error generating PDF:', error);
+                hidePdfLoading();
+                // Fallback to alert if notification system fails
+                alert('Error generating PDF report. Please try again.');
+            }
+        }
+        
+        // Modal Functions
+        function showModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+        }
+        
+        function hideModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+        
+        // Close modal when clicking outside
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(e) {
+                if (e.target === this) {
+                    hideModal(this.id);
+                }
+            });
+        });
+        
+        // Set current month as default
+        const currentMonth = new Date().getMonth() + 1;
+        reportMonth.value = currentMonth;
     </script>
 </body>
 </html>

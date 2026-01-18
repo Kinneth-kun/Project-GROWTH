@@ -2007,14 +2007,7 @@ function getStaffCommColor($type) {
                     <i class="fas fa-file-alt card-icon"></i>
                 </div>
                 <div class="card-value"><?= $app_stats['total_applications'] ?? 0 ?></div>
-                <div class="card-percentage positive-percentage">
-                    <i class="fas fa-chart-line"></i> 
-                    <?php if ($active_jobs > 0): ?>
-                        <?= round($total_apps / $active_jobs, 1) ?> apps per job
-                    <?php else: ?>
-                        No active jobs
-                    <?php endif; ?>
-                </div>
+                <!-- MODIFIED: Removed the apps per job percentage line -->
                 <div class="card-footer">Total Applications Received</div>
                 <div class="chart-container">
                     <canvas id="applicationStatusChart"></canvas>

@@ -51,18 +51,328 @@ try {
 // ============================================
 // CHECK AUTO-APPROVE SETTING
 // ============================================
-$auto_approve_users = 0;
+$auto_approve_users = false;
 try {
     $settings_stmt = $conn->prepare("SELECT setting_value FROM system_settings WHERE setting_name = 'auto_approve_users'");
     $settings_stmt->execute();
-    $auto_approve_setting = $settings_stmt->fetch(PDO::FETCH_COLUMN);
+    $setting = $settings_stmt->fetch();
     
-    if ($auto_approve_setting !== false) {
-        $auto_approve_users = intval($auto_approve_setting);
+    if ($setting && isset($setting['setting_value'])) {
+        $auto_approve_users = (bool)$setting['setting_value'];
     }
 } catch (PDOException $e) {
-    // If table doesn't exist yet or setting not found, use default value (0)
-    $auto_approve_users = 0;
+    // If table doesn't exist or error, default to false
+    $auto_approve_users = false;
+    error_log("[" . date('Y-m-d H:i:s') . "] employer_form.php: Error fetching auto-approve setting - " . $e->getMessage());
+}
+
+// ============================================
+// REDIRECTION HANDLER FOR PENDING APPROVAL
+// ============================================
+if (isset($_GET['pending_approval']) && $_GET['pending_approval'] == 'true') {
+    // Display a success page with countdown timer
+    $countdown_seconds = 5; // 5 seconds countdown
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Registration Complete - CTU-PESO</title>
+        <link rel="icon" type="image/png" href="images/ctu.png">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+        <style>
+            :root {
+                --primary-color: #6e0303;
+                --secondary-color: #f7a100;
+                --accent-color: #ffa700;
+                --green: #1f7a11;
+                --blue: #0044ff;
+            }
+            
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            }
+            
+            body {
+                background-color: #f5f6f8;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+                color: #333;
+            }
+            
+            .success-container {
+                background: white;
+                border-radius: 15px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+                padding: 40px;
+                text-align: center;
+                max-width: 600px;
+                width: 100%;
+                border-top: 5px solid var(--secondary-color);
+            }
+            
+            .success-icon {
+                font-size: 5rem;
+                color: var(--green);
+                margin-bottom: 20px;
+                animation: bounce 1s ease infinite;
+            }
+            
+            @keyframes bounce {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-10px); }
+            }
+            
+            .success-title {
+                font-size: 2.2rem;
+                color: var(--primary-color);
+                margin-bottom: 15px;
+                font-weight: 700;
+            }
+            
+            .success-message {
+                font-size: 1.1rem;
+                color: #555;
+                line-height: 1.6;
+                margin-bottom: 30px;
+            }
+            
+            .highlight-box {
+                background: linear-gradient(135deg, #e3f2fd, #bbdefb);
+                border-left: 4px solid var(--blue);
+                padding: 20px;
+                border-radius: 8px;
+                margin-bottom: 30px;
+                text-align: left;
+            }
+            
+            .highlight-title {
+                font-weight: 600;
+                color: var(--primary-color);
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            
+            .highlight-title i {
+                color: var(--blue);
+            }
+            
+            .highlight-list {
+                list-style: none;
+                padding-left: 10px;
+            }
+            
+            .highlight-list li {
+                margin-bottom: 8px;
+                display: flex;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            
+            .highlight-list i {
+                color: var(--green);
+                margin-top: 3px;
+            }
+            
+            .countdown-container {
+                background: #f8f9fa;
+                border-radius: 10px;
+                padding: 25px;
+                margin-bottom: 30px;
+                border: 1px solid #e0e0e0;
+            }
+            
+            .countdown-text {
+                font-size: 1rem;
+                color: #666;
+                margin-bottom: 15px;
+            }
+            
+            .countdown-timer {
+                font-size: 2.5rem;
+                font-weight: 700;
+                color: var(--primary-color);
+                margin-bottom: 10px;
+            }
+            
+            .redirect-message {
+                font-size: 0.9rem;
+                color: #888;
+                font-style: italic;
+            }
+            
+            .action-buttons {
+                display: flex;
+                gap: 15px;
+                justify-content: center;
+                margin-top: 20px;
+            }
+            
+            .btn {
+                padding: 12px 25px;
+                border: none;
+                border-radius: 8px;
+                font-size: 1rem;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.3s;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                text-decoration: none;
+            }
+            
+            .btn-primary {
+                background: linear-gradient(to right, var(--primary-color), #8a0404);
+                color: white;
+            }
+            
+            .btn-primary:hover {
+                background: linear-gradient(to right, #8a0404, #6e0303);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(110, 3, 3, 0.2);
+            }
+            
+            .btn-outline {
+                background: transparent;
+                border: 1px solid #ddd;
+                color: #666;
+            }
+            
+            .btn-outline:hover {
+                background: #f8f9fa;
+                border-color: #ccc;
+            }
+            
+            .logo-container {
+                margin-top: 30px;
+                text-align: center;
+            }
+            
+            .logo-container img {
+                height: 60px;
+                margin-bottom: 10px;
+            }
+            
+            .logo-text {
+                color: var(--primary-color);
+                font-weight: 600;
+                font-size: 1.1rem;
+            }
+            
+            @media (max-width: 768px) {
+                .success-container {
+                    padding: 30px 20px;
+                }
+                
+                .success-title {
+                    font-size: 1.8rem;
+                }
+                
+                .success-message {
+                    font-size: 1rem;
+                }
+                
+                .countdown-timer {
+                    font-size: 2rem;
+                }
+                
+                .action-buttons {
+                    flex-direction: column;
+                }
+                
+                .btn {
+                    width: 100%;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="success-container">
+            <div class="success-icon">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            
+            <h1 class="success-title">Registration Complete!</h1>
+            
+            <div class="success-message">
+                Thank you for completing your employer profile registration with CTU-PESO.
+            </div>
+            
+            <div class="highlight-box">
+                <div class="highlight-title">
+                    <i class="fas fa-info-circle"></i>
+                    Account Status: Pending Admin Approval
+                </div>
+                <ul class="highlight-list">
+                    <li><i class="fas fa-clock"></i> Your account is currently pending approval by our administrators</li>
+                    <li><i class="fas fa-envelope"></i> You will receive an email notification once your account is approved</li>
+                    <li><i class="fas fa-user-check"></i> After approval, you can log in and access all platform features</li>
+                    <li><i class="fas fa-history"></i> Approval typically takes 1-2 business days</li>
+                </ul>
+            </div>
+            
+            <div class="countdown-container">
+                <div class="countdown-text">
+                    You will be redirected to the homepage in:
+                </div>
+                <div class="countdown-timer" id="countdown">
+                    <?php echo $countdown_seconds; ?> seconds
+                </div>
+                <div class="redirect-message">
+                    You will be able to log in once your account is approved
+                </div>
+            </div>
+            
+            <div class="action-buttons">
+                <a href="index.php" class="btn btn-primary">
+                    <i class="fas fa-home"></i> Go to Homepage Now
+                </a>
+                <a href="index.php?page=contact" class="btn btn-outline">
+                    <i class="fas fa-headset"></i> Contact Support
+                </a>
+            </div>
+            
+            <div class="logo-container">
+                <div class="logo-text">CTU-PESO G.R.O.W.T.H. Platform</div>
+            </div>
+        </div>
+        
+        <script>
+            // Countdown timer
+            let seconds = <?php echo $countdown_seconds; ?>;
+            const countdownElement = document.getElementById('countdown');
+            
+            const countdownInterval = setInterval(() => {
+                seconds--;
+                countdownElement.textContent = seconds + " second" + (seconds !== 1 ? "s" : "");
+                
+                if (seconds <= 0) {
+                    clearInterval(countdownInterval);
+                    window.location.href = 'index.php';
+                }
+            }, 1000);
+            
+            // Auto-redirect after countdown
+            setTimeout(() => {
+                window.location.href = 'index.php';
+            }, <?php echo $countdown_seconds * 1000; ?>);
+        </script>
+    </body>
+    </html>
+    <?php
+    exit;
 }
 
 // ============================================
@@ -242,6 +552,13 @@ try {
 }
 
 // ============================================
+// CSRF PROTECTION
+// ============================================
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// ============================================
 // SESSION VALIDATION
 // ============================================
 if (!isset($_SESSION['verified_user_id']) && !isset($_SESSION['user_id'])) {
@@ -295,8 +612,7 @@ try {
     $existing_employer = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if ($existing_employer) {
-        // If employer exists, redirect based on auto-approve setting
-        // Update user status based on auto-approve setting
+        // Update user status to active if auto-approved
         if ($auto_approve_users) {
             $update_stmt = $conn->prepare("
                 UPDATE users 
@@ -337,13 +653,13 @@ try {
             unset($_SESSION['verified_user_id']);
         }
         
-        // MODIFIED: Redirect to different pages based on auto-approve setting
+        // Redirect based on auto-approve setting
         if ($auto_approve_users) {
             $redirect_message = "Employer profile already completed.";
             header('Location: employer_dashboard.php?message=' . urlencode($redirect_message));
         } else {
-            $redirect_message = "Employer profile completed. Waiting for admin approval.";
-            header('Location: employer_profile.php?message=' . urlencode($redirect_message));
+            // Redirect to pending approval success page
+            header('Location: employer_form.php?pending_approval=true');
         }
         exit;
     }
@@ -456,13 +772,6 @@ if (!empty($user_data['usr_address'])) {
     }
 }
 
-// Parse name from usr_name
-$full_name = $user_data['usr_name'] ?? '';
-$name_parts = explode(' ', $full_name);
-$first_name = $name_parts[0] ?? '';
-$middle_name = count($name_parts) > 2 ? $name_parts[1] : '';
-$last_name = count($name_parts) > 1 ? end($name_parts) : '';
-
 // Parse phone number
 $stored_phone = $user_data['usr_phone'] ?? '';
 $country_code = '+63';
@@ -486,340 +795,341 @@ $error = '';
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Sanitize and validate input
-    $last_name = trim(filter_input(INPUT_POST, 'last_name', FILTER_SANITIZE_STRING));
-    $first_name = trim(filter_input(INPUT_POST, 'first_name', FILTER_SANITIZE_STRING));
-    $middle_name = trim(filter_input(INPUT_POST, 'middle_name', FILTER_SANITIZE_STRING));
-    $email = trim(filter_input(INPUT_POST, 'email', FILTER_SANITIZE_EMAIL));
-    $country_code = trim(filter_input(INPUT_POST, 'country_code', FILTER_SANITIZE_STRING));
-    $phone = trim(filter_input(INPUT_POST, 'phone', FILTER_SANITIZE_STRING));
-    $gender = trim(filter_input(INPUT_POST, 'gender', FILTER_SANITIZE_STRING));
-    $birthdate = trim(filter_input(INPUT_POST, 'birthdate', FILTER_SANITIZE_STRING));
-    
-    // Address fields - IMPORTANT: Store PSGC names
-    $region = trim(filter_input(INPUT_POST, 'region', FILTER_SANITIZE_STRING));
-    $province = trim(filter_input(INPUT_POST, 'province', FILTER_SANITIZE_STRING));
-    $city = trim(filter_input(INPUT_POST, 'city', FILTER_SANITIZE_STRING));
-    $barangay = trim(filter_input(INPUT_POST, 'barangay', FILTER_SANITIZE_STRING));
-    $zip_code = trim(filter_input(INPUT_POST, 'zip_code', FILTER_SANITIZE_STRING));
-    $street_address = trim(filter_input(INPUT_POST, 'street_address', FILTER_SANITIZE_STRING));
-    
-    // Employer-specific fields
-    $company_name = trim(filter_input(INPUT_POST, 'company_name', FILTER_SANITIZE_STRING));
-    $industry_id = isset($_POST['industry']) ? intval($_POST['industry']) : 0;
-    $custom_industry = trim(filter_input(INPUT_POST, 'custom_industry', FILTER_SANITIZE_STRING) ?? '');
-    $contact_person = trim(filter_input(INPUT_POST, 'contact_person', FILTER_SANITIZE_STRING));
-    $company_description = trim(filter_input(INPUT_POST, 'company_description', FILTER_SANITIZE_STRING));
-    
-    // Validate required fields
-    $required_fields = [
-        'last_name' => $last_name,
-        'first_name' => $first_name,
-        'email' => $email,
-        'company_name' => $company_name,
-        'contact_person' => $contact_person,
-        'region' => $region,
-        'province' => $province,
-        'city' => $city,
-        'barangay' => $barangay
-    ];
-    
-    $missing_fields = [];
-    foreach ($required_fields as $field_name => $value) {
-        if (empty($value)) {
-            $missing_fields[] = $field_name;
-        }
-    }
-    
-    if (!empty($missing_fields)) {
-        $error = "All required fields must be filled: " . implode(', ', $missing_fields);
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $error = "Please enter a valid email address.";
+    // CSRF validation
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        $error = "Invalid form submission. Please try again.";
     } else {
-        // Validate phone number
-        $phone_validation = validatePhoneNumber($phone, $country_code);
-        if (!$phone_validation['valid']) {
-            $error = $phone_validation['error'];
+        // Validate Terms and Conditions acceptance
+        if (!isset($_POST['accept_terms']) || $_POST['accept_terms'] !== 'yes') {
+            $error = "You must accept the Terms and Conditions and Data Privacy Act to proceed.";
         } else {
-            $full_phone = $phone_validation['full_phone'];
+            // Sanitize and validate input
+            $last_name = trim(filter_input(INPUT_POST, 'last_name', FILTER_SANITIZE_STRING));
+            $first_name = trim(filter_input(INPUT_POST, 'first_name', FILTER_SANITIZE_STRING));
+            $middle_name = trim(filter_input(INPUT_POST, 'middle_name', FILTER_SANITIZE_STRING));
+            $email = trim(filter_input(INPUT_POST, 'email', FILTER_SANITIZE_EMAIL));
+            $country_code = trim(filter_input(INPUT_POST, 'country_code', FILTER_SANITIZE_STRING));
+            $phone = trim(filter_input(INPUT_POST, 'phone', FILTER_SANITIZE_STRING));
+            $gender = trim(filter_input(INPUT_POST, 'gender', FILTER_SANITIZE_STRING));
+            $birthdate = trim(filter_input(INPUT_POST, 'birthdate', FILTER_SANITIZE_STRING));
             
-            // Combine names
-            $full_name = trim("$first_name " . ($middle_name ? "$middle_name " : "") . "$last_name");
+            // Address fields - IMPORTANT: Store PSGC names
+            $region = trim(filter_input(INPUT_POST, 'region', FILTER_SANITIZE_STRING));
+            $province = trim(filter_input(INPUT_POST, 'province', FILTER_SANITIZE_STRING));
+            $city = trim(filter_input(INPUT_POST, 'city', FILTER_SANITIZE_STRING));
+            $barangay = trim(filter_input(INPUT_POST, 'barangay', FILTER_SANITIZE_STRING));
+            $zip_code = trim(filter_input(INPUT_POST, 'zip_code', FILTER_SANITIZE_STRING));
+            $street_address = trim(filter_input(INPUT_POST, 'street_address', FILTER_SANITIZE_STRING));
             
-            // Combine address components properly
-            $address_components = [];
-            if (!empty($street_address)) $address_components[] = $street_address;
-            if (!empty($barangay)) $address_components[] = $barangay;
-            if (!empty($city)) $address_components[] = $city;
-            if (!empty($province)) $address_components[] = $province;
-            if (!empty($region)) $address_components[] = $region;
-            if (!empty($zip_code)) $address_components[] = "ZIP: " . $zip_code;
+            // Employer-specific fields
+            $company_name = trim(filter_input(INPUT_POST, 'company_name', FILTER_SANITIZE_STRING));
+            $industry_id = isset($_POST['industry']) ? intval($_POST['industry']) : 0;
+            $custom_industry = trim(filter_input(INPUT_POST, 'custom_industry', FILTER_SANITIZE_STRING) ?? '');
+            $contact_person = trim(filter_input(INPUT_POST, 'contact_person', FILTER_SANITIZE_STRING));
+            $company_description = trim(filter_input(INPUT_POST, 'company_description', FILTER_SANITIZE_STRING));
             
-            $permanent_address = implode(', ', $address_components);
+            // Validate required fields
+            $required_fields = [
+                'last_name' => $last_name,
+                'first_name' => $first_name,
+                'email' => $email,
+                'company_name' => $company_name,
+                'contact_person' => $contact_person,
+                'region' => $region,
+                'province' => $province,
+                'city' => $city,
+                'barangay' => $barangay,
+                'phone' => $phone,
+                'gender' => $gender,
+                'birthdate' => $birthdate
+            ];
             
-            // Get industry name based on selection
-            $industry_name = '';
-            
-            if ($industry_id > 0 && $industry_id !== 9999) {
-                // Get industry name from database
-                try {
-                    $industry_stmt = $conn->prepare("SELECT industry_name FROM industry_categories WHERE industry_id = :industry_id");
-                    $industry_stmt->bindParam(':industry_id', $industry_id, PDO::PARAM_INT);
-                    $industry_stmt->execute();
-                    $industry_data = $industry_stmt->fetch();
-                    
-                    if ($industry_data) {
-                        $industry_name = $industry_data['industry_name'];
-                    } else {
-                        $error = "Selected industry is not valid.";
-                    }
-                } catch (PDOException $e) {
-                    $error = "Error validating industry selection.";
+            $missing_fields = [];
+            foreach ($required_fields as $field_name => $value) {
+                if (empty($value)) {
+                    $missing_fields[] = $field_name;
                 }
-            } elseif ($industry_id === 9999 && !empty($custom_industry)) {
-                // Handle custom industry
-                $custom_industry = ucfirst(strtolower(trim($custom_industry)));
-                $industry_name = $custom_industry;
-                
-                // Check if custom industry already exists (case-insensitive)
-                try {
-                    $custom_check_stmt = $conn->prepare("
-                        SELECT industry_id FROM industry_categories 
-                        WHERE LOWER(industry_name) = LOWER(:industry_name) AND is_active = TRUE
-                    ");
-                    $custom_check_stmt->bindParam(':industry_name', $custom_industry);
-                    $custom_check_stmt->execute();
-                    
-                    if ($custom_check_stmt->rowCount() === 0) {
-                        // Insert new custom industry
-                        $insert_industry_stmt = $conn->prepare("
-                            INSERT INTO industry_categories (industry_name, is_custom, added_by_user_id, created_at) 
-                            VALUES (:industry_name, TRUE, :user_id, NOW())
-                        ");
-                        $insert_industry_stmt->bindParam(':industry_name', $custom_industry);
-                        $insert_industry_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-                        $insert_industry_stmt->execute();
-                    }
-                } catch (PDOException $e) {
-                    // If there's an error, still use the custom industry name
-                    // This allows the form to proceed even if industry insertion fails
-                }
-            } else {
-                $error = "Please select an industry or enter a custom industry.";
             }
             
-            if (empty($error) && !empty($industry_name)) {
-                // Process file uploads
-                $business_permit_path = null;
-                $dti_sec_path = null;
-                $upload_error = '';
-                
-                // Create upload directory if it doesn't exist
-                if (!is_dir(UPLOAD_DIR)) {
-                    mkdir(UPLOAD_DIR, 0755, true);
-                }
-                
-                // Validate and upload business permit
-                $business_validation = validateFileUpload($_FILES['business_permit_file'], 'business permit');
-                if (!$business_validation['success']) {
-                    $error = $business_validation['error'];
+            if (!empty($missing_fields)) {
+                $error = "All required fields must be filled: " . implode(', ', $missing_fields);
+            } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $error = "Please enter a valid email address.";
+            } else {
+                // Validate phone number
+                $phone_validation = validatePhoneNumber($phone, $country_code);
+                if (!$phone_validation['valid']) {
+                    $error = $phone_validation['error'];
                 } else {
-                    // Validate and upload DTI/SEC permit
-                    $dti_validation = validateFileUpload($_FILES['dti_permit_file'], 'DTI/SEC permit');
-                    if (!$dti_validation['success']) {
-                        $error = $dti_validation['error'];
-                    } else {
-                        // Both files validated, proceed with uploads
+                    $full_phone = $phone_validation['full_phone'];
+                    
+                    // Combine names
+                    $full_name = trim("$first_name " . ($middle_name ? "$middle_name " : "") . "$last_name");
+                    
+                    // Combine address components properly
+                    $address_components = [];
+                    if (!empty($street_address)) $address_components[] = $street_address;
+                    if (!empty($barangay)) $address_components[] = $barangay;
+                    if (!empty($city)) $address_components[] = $city;
+                    if (!empty($province)) $address_components[] = $province;
+                    if (!empty($region)) $address_components[] = $region;
+                    if (!empty($zip_code)) $address_components[] = "ZIP: " . $zip_code;
+                    
+                    $permanent_address = implode(', ', $address_components);
+                    
+                    // Get industry name based on selection
+                    $industry_name = '';
+                    
+                    if ($industry_id > 0 && $industry_id !== 9999) {
+                        // Get industry name from database
                         try {
-                            // Generate secure filenames
-                            $business_filename = sanitizeFileName($business_validation['name']);
-                            $dti_filename = sanitizeFileName($dti_validation['name']);
+                            $industry_stmt = $conn->prepare("SELECT industry_name FROM industry_categories WHERE industry_id = :industry_id");
+                            $industry_stmt->bindParam(':industry_id', $industry_id, PDO::PARAM_INT);
+                            $industry_stmt->execute();
+                            $industry_data = $industry_stmt->fetch();
                             
-                            $business_path = UPLOAD_DIR . 'business_' . $business_filename;
-                            $dti_path = UPLOAD_DIR . 'dti_' . $dti_filename;
+                            if ($industry_data) {
+                                $industry_name = $industry_data['industry_name'];
+                            } else {
+                                $error = "Selected industry is not valid.";
+                            }
+                        } catch (PDOException $e) {
+                            $error = "Error validating industry selection.";
+                        }
+                    } elseif ($industry_id === 9999 && !empty($custom_industry)) {
+                        // Handle custom industry
+                        $custom_industry = ucfirst(strtolower(trim($custom_industry)));
+                        $industry_name = $custom_industry;
+                        
+                        // Check if custom industry already exists (case-insensitive)
+                        try {
+                            $custom_check_stmt = $conn->prepare("
+                                SELECT industry_id FROM industry_categories 
+                                WHERE LOWER(industry_name) = LOWER(:industry_name) AND is_active = TRUE
+                            ");
+                            $custom_check_stmt->bindParam(':industry_name', $custom_industry);
+                            $custom_check_stmt->execute();
                             
-                            // Move uploaded files
-                            if (move_uploaded_file($business_validation['tmp_name'], $business_path) &&
-                                move_uploaded_file($dti_validation['tmp_name'], $dti_path)) {
-                                
-                                $business_permit_path = $business_path;
-                                $dti_sec_path = $dti_path;
-                                
-                                // Begin database transaction
-                                $conn->beginTransaction();
-                                
+                            if ($custom_check_stmt->rowCount() === 0) {
+                                // Insert new custom industry
+                                $insert_industry_stmt = $conn->prepare("
+                                    INSERT INTO industry_categories (industry_name, is_custom, added_by_user_id, created_at) 
+                                    VALUES (:industry_name, TRUE, :user_id, NOW())
+                                ");
+                                $insert_industry_stmt->bindParam(':industry_name', $custom_industry);
+                                $insert_industry_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
+                                $insert_industry_stmt->execute();
+                            }
+                        } catch (PDOException $e) {
+                            // If there's an error, still use the custom industry name
+                            // This allows the form to proceed even if industry insertion fails
+                        }
+                    } else {
+                        $error = "Please select an industry or enter a custom industry.";
+                    }
+                    
+                    if (empty($error) && !empty($industry_name)) {
+                        // Process file uploads
+                        $business_permit_path = null;
+                        $dti_sec_path = null;
+                        $upload_error = '';
+                        
+                        // Create upload directory if it doesn't exist
+                        if (!is_dir(UPLOAD_DIR)) {
+                            mkdir(UPLOAD_DIR, 0755, true);
+                        }
+                        
+                        // Validate and upload business permit
+                        $business_validation = validateFileUpload($_FILES['business_permit_file'], 'business permit');
+                        if (!$business_validation['success']) {
+                            $error = $business_validation['error'];
+                        } else {
+                            // Validate and upload DTI/SEC permit
+                            $dti_validation = validateFileUpload($_FILES['dti_permit_file'], 'DTI/SEC permit');
+                            if (!$dti_validation['success']) {
+                                $error = $dti_validation['error'];
+                            } else {
+                                // Both files validated, proceed with uploads
                                 try {
-                                    // Check for duplicate company name
-                                    $check_stmt = $conn->prepare("SELECT emp_id FROM employers WHERE emp_company_name = :company_name");
-                                    $check_stmt->bindParam(':company_name', $company_name);
-                                    $check_stmt->execute();
+                                    // Generate secure filenames
+                                    $business_filename = sanitizeFileName($business_validation['name']);
+                                    $dti_filename = sanitizeFileName($dti_validation['name']);
                                     
-                                    if ($check_stmt->rowCount() > 0) {
-                                        throw new Exception("This company name is already registered.");
-                                    }
+                                    $business_path = UPLOAD_DIR . 'business_' . $business_filename;
+                                    $dti_path = UPLOAD_DIR . 'dti_' . $dti_filename;
                                     
-                                    // Check for duplicate phone (if provided)
-                                    if (!empty($full_phone)) {
-                                        $phone_check_stmt = $conn->prepare("
-                                            SELECT usr_id FROM users 
-                                            WHERE usr_phone = :phone 
-                                            AND usr_id != :user_id 
-                                            AND usr_phone IS NOT NULL 
-                                            AND usr_phone != ''
-                                        ");
-                                        $phone_check_stmt->bindParam(':phone', $full_phone);
-                                        $phone_check_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-                                        $phone_check_stmt->execute();
+                                    // Move uploaded files
+                                    if (move_uploaded_file($business_validation['tmp_name'], $business_path) &&
+                                        move_uploaded_file($dti_validation['tmp_name'], $dti_path)) {
                                         
-                                        if ($phone_check_stmt->rowCount() > 0) {
-                                            throw new Exception("This phone number is already registered with another account.");
+                                        $business_permit_path = $business_path;
+                                        $dti_sec_path = $dti_path;
+                                        
+                                        // Begin database transaction
+                                        $conn->beginTransaction();
+                                        
+                                        try {
+                                            // Check for duplicate company name
+                                            $check_stmt = $conn->prepare("SELECT emp_id FROM employers WHERE emp_company_name = :company_name");
+                                            $check_stmt->bindParam(':company_name', $company_name);
+                                            $check_stmt->execute();
+                                            
+                                            if ($check_stmt->rowCount() > 0) {
+                                                throw new Exception("This company name is already registered.");
+                                            }
+                                            
+                                            // Check for duplicate phone (if provided)
+                                            if (!empty($full_phone)) {
+                                                $phone_check_stmt = $conn->prepare("
+                                                    SELECT usr_id FROM users 
+                                                    WHERE usr_phone = :phone 
+                                                    AND usr_id != :user_id 
+                                                    AND usr_phone IS NOT NULL 
+                                                    AND usr_phone != ''
+                                                ");
+                                                $phone_check_stmt->bindParam(':phone', $full_phone);
+                                                $phone_check_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
+                                                $phone_check_stmt->execute();
+                                                
+                                                if ($phone_check_stmt->rowCount() > 0) {
+                                                    throw new Exception("This phone number is already registered with another account.");
+                                                }
+                                            }
+                                            
+                                            // Check for duplicate email
+                                            $email_check_stmt = $conn->prepare("
+                                                SELECT usr_id FROM users 
+                                                WHERE usr_email = :email 
+                                                AND usr_id != :user_id
+                                            ");
+                                            $email_check_stmt->bindParam(':email', $email);
+                                            $email_check_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
+                                            $email_check_stmt->execute();
+                                            
+                                            if ($email_check_stmt->rowCount() > 0) {
+                                                throw new Exception("This email address is already registered with another account.");
+                                            }
+                                            
+                                            // Determine approval status based on system setting
+                                            $is_approved = $auto_approve_users ? TRUE : FALSE;
+                                            $account_status = $auto_approve_users ? 'active' : 'pending';
+                                            
+                                            // Update user information with address
+                                            $update_user_stmt = $conn->prepare("
+                                                UPDATE users 
+                                                SET usr_name = :name, 
+                                                    usr_email = :email, 
+                                                    usr_phone = :phone,
+                                                    usr_gender = :gender,
+                                                    usr_birthdate = :birthdate,
+                                                    usr_address = :address,
+                                                    usr_is_approved = :is_approved,
+                                                    usr_account_status = :account_status,
+                                                    usr_updated_at = NOW()
+                                                WHERE usr_id = :user_id
+                                            ");
+                                            
+                                            $update_user_stmt->bindParam(':name', $full_name);
+                                            $update_user_stmt->bindParam(':email', $email);
+                                            $update_user_stmt->bindParam(':phone', $full_phone);
+                                            $update_user_stmt->bindParam(':gender', $gender);
+                                            $update_user_stmt->bindParam(':birthdate', $birthdate);
+                                            $update_user_stmt->bindParam(':address', $permanent_address);
+                                            $update_user_stmt->bindParam(':is_approved', $is_approved, PDO::PARAM_BOOL);
+                                            $update_user_stmt->bindParam(':account_status', $account_status);
+                                            $update_user_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
+                                            $update_user_stmt->execute();
+                                            
+                                            // Insert employer profile with emp_industry (not industry_id)
+                                            $insert_stmt = $conn->prepare("
+                                                INSERT INTO employers (
+                                                    emp_usr_id, 
+                                                    emp_company_name, 
+                                                    emp_industry,
+                                                    emp_contact_person, 
+                                                    emp_company_description, 
+                                                    emp_business_permit, 
+                                                    emp_dti_sec,
+                                                    emp_created_at
+                                                ) VALUES (
+                                                    :user_id, 
+                                                    :company_name, 
+                                                    :industry,
+                                                    :contact_person, 
+                                                    :company_description, 
+                                                    :business_permit, 
+                                                    :dti_sec,
+                                                    NOW()
+                                                )
+                                            ");
+                                            
+                                            $insert_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
+                                            $insert_stmt->bindParam(':company_name', $company_name);
+                                            $insert_stmt->bindParam(':industry', $industry_name);
+                                            $insert_stmt->bindParam(':contact_person', $contact_person);
+                                            $insert_stmt->bindParam(':company_description', $company_description);
+                                            $insert_stmt->bindParam(':business_permit', $business_permit_path);
+                                            $insert_stmt->bindParam(':dti_sec', $dti_sec_path);
+                                            $insert_stmt->execute();
+                                            
+                                            // Update user role to employer
+                                            $update_role_stmt = $conn->prepare("
+                                                UPDATE users 
+                                                SET usr_role = 'employer',
+                                                    usr_updated_at = NOW()
+                                                WHERE usr_id = :user_id
+                                            ");
+                                            $update_role_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
+                                            $update_role_stmt->execute();
+                                            
+                                            // Commit transaction
+                                            $conn->commit();
+                                            
+                                            // Set session variables for logged in user
+                                            $_SESSION['user_id'] = $user_id;
+                                            $_SESSION['logged_in'] = true;
+                                            $_SESSION['is_approved'] = $is_approved;
+                                            $_SESSION['account_status'] = $account_status;
+                                            $_SESSION['user_name'] = $full_name;
+                                            $_SESSION['user_role'] = 'employer';
+                                            
+                                            // Clear verification session if coming from registration
+                                            if (isset($_SESSION['verified_user_id'])) {
+                                                unset($_SESSION['verified_user_id']);
+                                            }
+                                            
+                                            // Regenerate session ID after privilege change
+                                            session_regenerate_id(true);
+                                            
+                                            // Redirect based on auto-approve setting
+                                            if ($auto_approve_users) {
+                                                $_SESSION['success'] = "Employer profile completed successfully! Your account is now active.";
+                                                header('Location: employer_dashboard.php');
+                                            } else {
+                                                // Redirect to pending approval success page
+                                                header('Location: employer_form.php?pending_approval=true');
+                                            }
+                                            exit;
+                                            
+                                        } catch (Exception $e) {
+                                            // Rollback transaction on error
+                                            $conn->rollBack();
+                                            
+                                            // Delete uploaded files if transaction failed
+                                            if (file_exists($business_path)) unlink($business_path);
+                                            if (file_exists($dti_path)) unlink($dti_path);
+                                            
+                                            throw $e;
                                         }
-                                    }
-                                    
-                                    // Check for duplicate email
-                                    $email_check_stmt = $conn->prepare("
-                                        SELECT usr_id FROM users 
-                                        WHERE usr_email = :email 
-                                        AND usr_id != :user_id
-                                    ");
-                                    $email_check_stmt->bindParam(':email', $email);
-                                    $email_check_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-                                    $email_check_stmt->execute();
-                                    
-                                    if ($email_check_stmt->rowCount() > 0) {
-                                        throw new Exception("This email address is already registered with another account.");
-                                    }
-                                    
-                                    // Update user information first
-                                    $update_user_stmt = $conn->prepare("
-                                        UPDATE users 
-                                        SET usr_name = :name, 
-                                            usr_email = :email, 
-                                            usr_phone = :phone,
-                                            usr_gender = :gender,
-                                            usr_birthdate = :birthdate,
-                                            usr_address = :address,
-                                            usr_updated_at = NOW()
-                                        WHERE usr_id = :user_id
-                                    ");
-                                    
-                                    $update_user_stmt->bindParam(':name', $full_name);
-                                    $update_user_stmt->bindParam(':email', $email);
-                                    $update_user_stmt->bindParam(':phone', $full_phone);
-                                    $update_user_stmt->bindParam(':gender', $gender);
-                                    $update_user_stmt->bindParam(':birthdate', $birthdate);
-                                    $update_user_stmt->bindParam(':address', $permanent_address);
-                                    $update_user_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-                                    $update_user_stmt->execute();
-                                    
-                                    // Insert employer profile with emp_industry (not industry_id)
-                                    $insert_stmt = $conn->prepare("
-                                        INSERT INTO employers (
-                                            emp_usr_id, 
-                                            emp_company_name, 
-                                            emp_industry,
-                                            emp_contact_person, 
-                                            emp_company_description, 
-                                            emp_business_permit, 
-                                            emp_dti_sec,
-                                            emp_created_at
-                                        ) VALUES (
-                                            :user_id, 
-                                            :company_name, 
-                                            :industry,
-                                            :contact_person, 
-                                            :company_description, 
-                                            :business_permit, 
-                                            :dti_sec,
-                                            NOW()
-                                        )
-                                    ");
-                                    
-                                    $insert_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-                                    $insert_stmt->bindParam(':company_name', $company_name);
-                                    $insert_stmt->bindParam(':industry', $industry_name);
-                                    $insert_stmt->bindParam(':contact_person', $contact_person);
-                                    $insert_stmt->bindParam(':company_description', $company_description);
-                                    $insert_stmt->bindParam(':business_permit', $business_permit_path);
-                                    $insert_stmt->bindParam(':dti_sec', $dti_sec_path);
-                                    $insert_stmt->execute();
-                                    
-                                    // Update user role to employer
-                                    $update_role_stmt = $conn->prepare("
-                                        UPDATE users 
-                                        SET usr_role = 'employer',
-                                            usr_updated_at = NOW()
-                                        WHERE usr_id = :user_id
-                                    ");
-                                    $update_role_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-                                    $update_role_stmt->execute();
-                                    
-                                    // Update user status based on auto-approve setting
-                                    if ($auto_approve_users) {
-                                        $update_status_stmt = $conn->prepare("
-                                            UPDATE users 
-                                            SET usr_is_approved = TRUE, 
-                                                usr_account_status = 'active',
-                                                usr_updated_at = NOW()
-                                            WHERE usr_id = :user_id
-                                        ");
+                                        
                                     } else {
-                                        $update_status_stmt = $conn->prepare("
-                                            UPDATE users 
-                                            SET usr_account_status = 'pending',
-                                                usr_updated_at = NOW()
-                                            WHERE usr_id = :user_id
-                                        ");
+                                        throw new Exception("Failed to upload files. Please try again.");
                                     }
-                                    $update_status_stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
-                                    $update_status_stmt->execute();
-                                    
-                                    // Commit transaction
-                                    $conn->commit();
-                                    
-                                    // Set session variables for logged in user
-                                    $_SESSION['user_id'] = $user_id;
-                                    $_SESSION['logged_in'] = true;
-                                    $_SESSION['is_approved'] = $auto_approve_users;
-                                    $_SESSION['account_status'] = $auto_approve_users ? 'active' : 'pending';
-                                    $_SESSION['user_name'] = $full_name;
-                                    $_SESSION['user_role'] = 'employer';
-                                    
-                                    // Clear verification session if coming from registration
-                                    if (isset($_SESSION['verified_user_id'])) {
-                                        unset($_SESSION['verified_user_id']);
-                                    }
-                                    
-                                    // Regenerate session ID after privilege change
-                                    session_regenerate_id(true);
-                                    
-                                    // MODIFIED: Redirect to different pages based on auto-approve setting
-                                    if ($auto_approve_users) {
-                                        $success = "Employer profile completed successfully! Your account has been approved.";
-                                        header('Refresh: 2; URL=employer_dashboard.php?success=' . urlencode($success));
-                                    } else {
-                                        $success = "Employer profile completed successfully! Your account is pending admin approval.";
-                                        header('Refresh: 2; URL=employer_profile.php?pending=1&message=' . urlencode($success));
-                                    }
-                                    $success .= " Redirecting...";
                                     
                                 } catch (Exception $e) {
-                                    // Rollback transaction on error
-                                    $conn->rollBack();
-                                    
-                                    // Delete uploaded files if transaction failed
-                                    if (file_exists($business_path)) unlink($business_path);
-                                    if (file_exists($dti_path)) unlink($dti_path);
-                                    
-                                    throw $e;
+                                    $error = $e->getMessage();
                                 }
-                                
-                            } else {
-                                throw new Exception("Failed to upload files. Please try again.");
                             }
-                            
-                        } catch (Exception $e) {
-                            $error = $e->getMessage();
                         }
                     }
                 }
@@ -1238,6 +1548,211 @@ ob_end_flush();
       margin-bottom: 20px;
     }
     
+    /* ============================================
+       TERMS AND CONDITIONS STYLES
+       ============================================ */
+    .terms-section {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 25px;
+      margin-bottom: 25px;
+      border-top: 4px solid var(--purple);
+    }
+    
+    .terms-header {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    
+    .terms-title {
+      font-size: 1.5rem;
+      color: var(--primary-color);
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    
+    .terms-subtitle {
+      color: #666;
+      font-size: 1rem;
+    }
+    
+    .terms-content {
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 20px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      line-height: 1.6;
+    }
+    
+    .terms-content h3 {
+      color: var(--primary-color);
+      margin: 15px 0 10px 0;
+      font-size: 1.2rem;
+    }
+    
+    .terms-content h4 {
+      color: #444;
+      margin: 12px 0 8px 0;
+      font-size: 1.1rem;
+    }
+    
+    .terms-content p {
+      margin-bottom: 10px;
+      text-align: justify;
+    }
+    
+    .terms-content ul, .terms-content ol {
+      margin-left: 20px;
+      margin-bottom: 10px;
+    }
+    
+    .terms-content li {
+      margin-bottom: 5px;
+    }
+    
+    .terms-checkbox {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 15px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      margin-bottom: 20px;
+    }
+    
+    .terms-checkbox input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      margin-top: 2px;
+      cursor: pointer;
+    }
+    
+    .terms-checkbox label {
+      flex: 1;
+      cursor: pointer;
+      font-weight: 500;
+      color: #333;
+    }
+    
+    .terms-checkbox label span {
+      color: var(--red);
+      font-weight: bold;
+    }
+    
+    .terms-checkbox.error {
+      border-color: var(--red);
+      background-color: #fff8f8;
+    }
+    
+    .terms-error {
+      color: var(--red);
+      font-size: 0.9rem;
+      margin-top: 5px;
+      display: none;
+    }
+    
+    .terms-error.show {
+      display: block;
+    }
+    
+    .terms-actions {
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      margin-top: 20px;
+    }
+    
+    .terms-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 10000;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    
+    .terms-modal-content {
+      background: white;
+      border-radius: 10px;
+      width: 100%;
+      max-width: 800px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      animation: modalFadeIn 0.3s ease;
+    }
+    
+    @keyframes modalFadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .terms-modal-header {
+      background: linear-gradient(to right, var(--primary-color), #8a0404);
+      color: white;
+      padding: 20px;
+      border-radius: 10px 10px 0 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .terms-modal-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+    
+    .terms-modal-close {
+      background: none;
+      border: none;
+      color: white;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 5px;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.3s;
+    }
+    
+    .terms-modal-close:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+    
+    .terms-modal-body {
+      padding: 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    
+    .terms-modal-footer {
+      padding: 20px;
+      border-top: 1px solid #eee;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    
     @media (max-width: 968px) {
       .form-grid {
         grid-template-columns: 1fr;
@@ -1297,6 +1812,18 @@ ob_end_flush();
       .custom-industry-input-group .btn {
         width: 100%;
       }
+      
+      .terms-actions {
+        flex-direction: column;
+      }
+      
+      .terms-modal {
+        padding: 10px;
+      }
+      
+      .terms-modal-content {
+        max-height: 95vh;
+      }
     }
   </style>
 </head>
@@ -1307,6 +1834,96 @@ ob_end_flush();
       <i class="fas fa-spinner fa-spin"></i>
     </div>
     <p>Processing your request...</p>
+  </div>
+  
+  <!-- Terms and Conditions Modal -->
+  <div class="terms-modal" id="termsModal">
+    <div class="terms-modal-content">
+      <div class="terms-modal-header">
+        <div class="terms-modal-title">Terms and Conditions & Data Privacy Act</div>
+        <button type="button" class="terms-modal-close" id="closeTermsModal">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="terms-modal-body">
+        <h2>CTU-PESO G.R.O.W.T.H. Platform</h2>
+        <h3>Terms and Conditions for Employers</h3>
+        
+        <h4>1. Acceptance of Terms</h4>
+        <p>By accessing and using the CTU-PESO G.R.O.W.T.H. Platform as an employer, you acknowledge that you have read, understood, and agree to be bound by these Terms and Conditions. If you do not agree with any part of these terms, you must not use this platform.</p>
+        
+        <h4>2. Employer Eligibility</h4>
+        <p>This platform is for legitimate businesses and organizations seeking to hire CTU alumni. You must be authorized to represent your company and have the legal capacity to enter into agreements on its behalf.</p>
+        
+        <h4>3. Employer Responsibilities</h4>
+        <ul>
+          <li>Provide accurate and complete information about your company</li>
+          <li>Maintain the confidentiality of your account credentials</li>
+          <li>Only post legitimate job opportunities</li>
+          <li>Comply with all applicable labor laws and regulations</li>
+          <li>Treat all applicants with respect and professionalism</li>
+          <li>Provide timely responses to job applications</li>
+        </ul>
+        
+        <h4>4. Job Postings</h4>
+        <p>All job postings must be for legitimate employment opportunities. CTU-PESO reserves the right to review, edit, or remove any job posting that violates these terms or is deemed inappropriate.</p>
+        
+        <h4>5. Verification Process</h4>
+        <p>All employer accounts must complete a verification process which includes submission of business permits and DTI/SEC registration. CTU-PESO reserves the right to approve or reject employer registrations at its discretion.</p>
+        
+        <h4>6. Termination</h4>
+        <p>CTU-PESO reserves the right to suspend or terminate employer accounts that violate these terms, provide false information, or engage in activities that compromise platform security or integrity.</p>
+        
+        <h3>Data Privacy Act (Republic Act 10173)</h3>
+        
+        <h4>1. Data Collection</h4>
+        <p>We collect company information necessary for platform functionality, including but not limited to: company name, contact information, industry, business permits, and job postings.</p>
+        
+        <h4>2. Purpose of Data Collection</h4>
+        <p>Your company data is collected and processed for the following purposes:</p>
+        <ul>
+          <li>Employer account verification and management</li>
+          <li>Job posting and candidate matching</li>
+          <li>Platform improvement and development</li>
+          <li>Communication regarding platform updates and features</li>
+          <li>Compliance with legal and regulatory requirements</li>
+        </ul>
+        
+        <h4>3. Data Sharing</h4>
+        <p>Your company information will be shared with:</p>
+        <ul>
+          <li>CTU alumni for job application purposes</li>
+          <li>CTU administration for verification and reporting</li>
+          <li>Service providers who assist in platform operations</li>
+          <li>Government agencies when required by law</li>
+        </ul>
+        
+        <h4>4. Your Rights</h4>
+        <p>Under the Data Privacy Act, you have the right to:</p>
+        <ul>
+          <li>Access your company data</li>
+          <li>Correct inaccurate or incomplete data</li>
+          <li>Request deletion of your data</li>
+          <li>Withdraw consent for data processing</li>
+        </ul>
+        
+        <h4>5. Contact Information</h4>
+        <p>For data privacy concerns, you may contact our Data Protection Officer at:</p>
+        <p>CTU-PESO Office<br>
+        Cebu Technological University<br>
+        Email: dpo@ctu.edu.ph<br>
+        Phone: (032) 123-4567</p>
+        
+        <div class="terms-checkbox" style="margin-top: 20px;">
+          <input type="checkbox" id="modalAgreeCheckbox">
+          <label for="modalAgreeCheckbox">I have read and understood the Terms and Conditions and Data Privacy Act provisions above.</label>
+        </div>
+      </div>
+      <div class="terms-modal-footer">
+        <button type="button" class="btn btn-outline" id="declineTerms">Decline</button>
+        <button type="button" class="btn btn-primary" id="acceptTermsModal" disabled>Accept Terms</button>
+      </div>
+    </div>
   </div>
   
   <div class="container">
@@ -1329,15 +1946,6 @@ ob_end_flush();
       <div class="welcome-message">
         <h2>Welcome!</h2>
         <p>Please complete your personal and company information to finalize your registration.</p>
-        <?php if (!$auto_approve_users): ?>
-          <p style="color: var(--red); font-weight: 500; margin-top: 10px;">
-            <i class="fas fa-info-circle"></i> Your account will require admin approval after registration.
-          </p>
-        <?php else: ?>
-          <p style="color: var(--green); font-weight: 500; margin-top: 10px;">
-            <i class="fas fa-check-circle"></i> Your account will be automatically approved and you'll be redirected to your dashboard.
-          </p>
-        <?php endif; ?>
       </div>
       
       <?php 
@@ -1352,14 +1960,62 @@ ob_end_flush();
         </div>
       <?php endif; ?>
       
-      <?php if (!empty($success)): ?>
+      <?php if (isset($_SESSION['success'])): ?>
         <div class="alert alert-success">
           <i class="fas fa-check-circle"></i>
-          <?php echo htmlspecialchars($success); ?>
+          <?php echo htmlspecialchars($_SESSION['success']); ?>
+          <?php unset($_SESSION['success']); ?>
         </div>
       <?php endif; ?>
       
-      <form method="POST" action="" enctype="multipart/form-data" id="employerForm">
+      <!-- Terms and Conditions Section -->
+      <div class="terms-section" id="termsSection">
+        <div class="terms-header">
+          <h3 class="terms-title">Terms and Conditions & Data Privacy Act</h3>
+          <p class="terms-subtitle">Please read and accept the terms to proceed with registration</p>
+        </div>
+        
+        <div class="terms-content">
+          <h3>Important Notice</h3>
+          <p>Before completing your registration, please review our Terms and Conditions and Data Privacy Act compliance statement. These documents outline your rights and responsibilities as an employer using the CTU-PESO G.R.O.W.T.H. Platform.</p>
+          
+          <h4>Key Points:</h4>
+          <ul>
+            <li>Your company data will be used for job posting and candidate matching</li>
+            <li>We implement security measures to protect your information</li>
+            <li>You have rights under the Data Privacy Act of 2012</li>
+            <li>By accepting, you consent to data processing as described</li>
+            <li>You agree to provide accurate information and use the platform responsibly</li>
+          </ul>
+          
+          <p><strong>Please click the "View Full Terms" button below to read the complete Terms and Conditions and Data Privacy Act provisions.</strong></p>
+        </div>
+        
+        <div class="terms-checkbox" id="termsCheckbox">
+          <input type="checkbox" id="accept_terms" name="accept_terms" value="yes">
+          <label for="accept_terms">
+            I have read, understood, and agree to the <span>Terms and Conditions</span> and consent to the processing of my personal data in accordance with the <span>Data Privacy Act of 2012 (Republic Act 10173)</span>.
+          </label>
+        </div>
+        <div class="terms-error" id="terms_error">You must accept the Terms and Conditions to proceed.</div>
+        
+        <div class="terms-actions">
+          <button type="button" class="btn btn-outline" id="viewTermsBtn">
+            <i class="fas fa-file-contract"></i> View Full Terms
+          </button>
+          <button type="button" class="btn btn-primary" id="proceedBtn" disabled>
+            <i class="fas fa-arrow-right"></i> Proceed to Registration
+          </button>
+        </div>
+      </div>
+      
+      <!-- Main Form (Initially Hidden) -->
+      <form method="POST" action="" enctype="multipart/form-data" id="employerForm" style="display: none;">
+        <!-- CSRF Token -->
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+        <!-- Terms Acceptance -->
+        <input type="hidden" name="accept_terms" id="hiddenAcceptTerms" value="">
+        
         <div class="form-grid">
           <!-- Personal Information Section -->
           <div class="form-section personal-info">
@@ -1380,21 +2036,21 @@ ob_end_flush();
                 <div>
                   <label class="form-label" for="last_name">Last Name</label>
                   <input type="text" id="last_name" name="last_name" class="form-input" 
-                         value="<?php echo isset($form_data['last_name']) ? htmlspecialchars($form_data['last_name']) : htmlspecialchars($last_name); ?>" 
+                         value="<?php echo isset($form_data['last_name']) ? htmlspecialchars($form_data['last_name']) : ''; ?>" 
                          required placeholder="Last Name">
                   <div class="error-message" id="last_name_error"></div>
                 </div>
                 <div>
                   <label class="form-label" for="first_name">First Name</label>
                   <input type="text" id="first_name" name="first_name" class="form-input" 
-                         value="<?php echo isset($form_data['first_name']) ? htmlspecialchars($form_data['first_name']) : htmlspecialchars($first_name); ?>" 
+                         value="<?php echo isset($form_data['first_name']) ? htmlspecialchars($form_data['first_name']) : ''; ?>" 
                          required placeholder="First Name">
                   <div class="error-message" id="first_name_error"></div>
                 </div>
                 <div>
                   <label class="form-label" for="middle_name">Middle Name</label>
                   <input type="text" id="middle_name" name="middle_name" class="form-input" 
-                         value="<?php echo isset($form_data['middle_name']) ? htmlspecialchars($form_data['middle_name']) : htmlspecialchars($middle_name); ?>" 
+                         value="<?php echo isset($form_data['middle_name']) ? htmlspecialchars($form_data['middle_name']) : ''; ?>" 
                          placeholder="Middle Name">
                 </div>
               </div>
@@ -1438,19 +2094,24 @@ ob_end_flush();
               <div class="error-message" id="phone_error"></div>
             </div>
             
+            <!-- MODIFIED: Gender now required -->
             <div class="form-group">
-              <label class="form-label" for="gender">Gender</label>
-              <select id="gender" name="gender" class="form-select">
+              <label class="form-label" for="gender">Gender <span class="required">*</span></label>
+              <select id="gender" name="gender" class="form-select" required>
                 <option value="">Select Gender</option>
                 <option value="Male" <?php echo (isset($form_data['gender']) && $form_data['gender'] === 'Male') ? 'selected' : ((isset($user_data['usr_gender']) && $user_data['usr_gender'] === 'Male') ? 'selected' : ''); ?>>Male</option>
                 <option value="Female" <?php echo (isset($form_data['gender']) && $form_data['gender'] === 'Female') ? 'selected' : ((isset($user_data['usr_gender']) && $user_data['usr_gender'] === 'Female') ? 'selected' : ''); ?>>Female</option>
               </select>
+              <div class="error-message" id="gender_error"></div>
             </div>
             
+            <!-- MODIFIED: Birthdate now required -->
             <div class="form-group">
-              <label class="form-label" for="birthdate">Birthdate</label>
+              <label class="form-label" for="birthdate">Birthdate <span class="required">*</span></label>
               <input type="date" id="birthdate" name="birthdate" class="form-input" 
-                     value="<?php echo isset($form_data['birthdate']) ? htmlspecialchars($form_data['birthdate']) : htmlspecialchars($user_data['usr_birthdate'] ?? ''); ?>">
+                     value="<?php echo isset($form_data['birthdate']) ? htmlspecialchars($form_data['birthdate']) : htmlspecialchars($user_data['usr_birthdate'] ?? ''); ?>"
+                     required>
+              <div class="error-message" id="birthdate_error"></div>
             </div>
             
             <div class="form-group">
@@ -1760,10 +2421,46 @@ ob_end_flush();
       
       validatePhone(phone) {
         const phoneRegex = /^[0-9]{10,11}$/;
-        if (phone && !phoneRegex.test(phone)) {
+        if (!phone) {
+          this.errors.phone = 'Phone number is required';
+          return false;
+        }
+        if (!phoneRegex.test(phone)) {
           this.errors.phone = 'Phone number must be 10-11 digits';
           return false;
         }
+        return true;
+      }
+      
+      validateGender(gender) {
+        if (!gender) {
+          this.errors.gender = 'Gender is required';
+          return false;
+        }
+        return true;
+      }
+      
+      validateBirthdate(birthdate) {
+        if (!birthdate) {
+          this.errors.birthdate = 'Birthdate is required';
+          return false;
+        }
+        
+        const birthDate = new Date(birthdate);
+        const today = new Date();
+        const minAgeDate = new Date();
+        minAgeDate.setFullYear(today.getFullYear() - 150); // Max age 150 years
+        
+        if (birthDate > today) {
+          this.errors.birthdate = 'Birthdate cannot be in the future';
+          return false;
+        }
+        
+        if (birthDate < minAgeDate) {
+          this.errors.birthdate = 'Please enter a valid birthdate';
+          return false;
+        }
+        
         return true;
       }
       
@@ -1843,10 +2540,139 @@ ob_end_flush();
       }
     }
 
+    // Terms and Conditions Manager
+    class TermsManager {
+      constructor() {
+        this.termsModal = document.getElementById('termsModal');
+        this.closeTermsModalBtn = document.getElementById('closeTermsModal');
+        this.viewTermsBtn = document.getElementById('viewTermsBtn');
+        this.proceedBtn = document.getElementById('proceedBtn');
+        this.declineTermsBtn = document.getElementById('declineTerms');
+        this.acceptTermsModalBtn = document.getElementById('acceptTermsModal');
+        this.termsCheckbox = document.getElementById('accept_terms');
+        this.hiddenAcceptTerms = document.getElementById('hiddenAcceptTerms');
+        this.termsSection = document.getElementById('termsSection');
+        this.employerForm = document.getElementById('employerForm');
+        this.modalAgreeCheckbox = document.getElementById('modalAgreeCheckbox');
+        this.termsError = document.getElementById('terms_error');
+        
+        this.initialize();
+      }
+      
+      initialize() {
+        // Event listeners for terms management
+        this.viewTermsBtn.addEventListener('click', () => this.showModal());
+        this.closeTermsModalBtn.addEventListener('click', () => this.hideModal());
+        this.declineTermsBtn.addEventListener('click', () => this.declineTerms());
+        this.acceptTermsModalBtn.addEventListener('click', () => this.acceptTermsFromModal());
+        this.modalAgreeCheckbox.addEventListener('change', (e) => this.toggleModalAcceptButton(e));
+        this.termsCheckbox.addEventListener('change', (e) => this.toggleProceedButton(e));
+        this.proceedBtn.addEventListener('click', () => this.proceedToForm());
+        
+        // Close modal when clicking outside
+        window.addEventListener('click', (e) => {
+          if (e.target === this.termsModal) {
+            this.hideModal();
+          }
+        });
+        
+        // Escape key to close modal
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && this.termsModal.style.display === 'flex') {
+            this.hideModal();
+          }
+        });
+      }
+      
+      showModal() {
+        this.termsModal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        // Reset modal checkbox
+        this.modalAgreeCheckbox.checked = false;
+        this.acceptTermsModalBtn.disabled = true;
+      }
+      
+      hideModal() {
+        this.termsModal.style.display = 'none';
+        document.body.style.overflow = 'auto';
+      }
+      
+      toggleModalAcceptButton(e) {
+        this.acceptTermsModalBtn.disabled = !e.target.checked;
+      }
+      
+      toggleProceedButton(e) {
+        this.proceedBtn.disabled = !e.target.checked;
+        this.termsCheckbox.classList.toggle('error', false);
+        this.termsError.classList.remove('show');
+      }
+      
+      acceptTermsFromModal() {
+        if (this.modalAgreeCheckbox.checked) {
+          this.termsCheckbox.checked = true;
+          this.proceedBtn.disabled = false;
+          this.hideModal();
+          this.showNotification('Terms accepted successfully. You may now proceed to registration.', 'success');
+        }
+      }
+      
+      declineTerms() {
+        if (confirm('Declining the Terms and Conditions will cancel your registration. Are you sure you want to decline?')) {
+          window.location.href = 'index.php?page=select_role';
+        }
+      }
+      
+      proceedToForm() {
+        if (this.termsCheckbox.checked) {
+          // Set the hidden field value
+          this.hiddenAcceptTerms.value = 'yes';
+          
+          // Hide terms section and show form
+          this.termsSection.style.display = 'none';
+          this.employerForm.style.display = 'block';
+          
+          // Scroll to top of form
+          this.employerForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          
+          this.showNotification('Please complete the registration form below.', 'info');
+        } else {
+          this.termsCheckbox.classList.add('error');
+          this.termsError.classList.add('show');
+          this.showNotification('You must accept the Terms and Conditions to proceed.', 'error');
+        }
+      }
+      
+      validateTerms() {
+        if (!this.termsCheckbox.checked) {
+          this.termsCheckbox.classList.add('error');
+          this.termsError.classList.add('show');
+          return false;
+        }
+        return true;
+      }
+      
+      showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `alert alert-${type === 'error' ? 'error' : 'success'}`;
+        notification.innerHTML = `
+          <i class="fas fa-${type === 'error' ? 'exclamation-circle' : type === 'warning' ? 'exclamation-triangle' : 'check-circle'}"></i>
+          ${message}
+        `;
+        
+        const content = document.querySelector('.content');
+        content.insertBefore(notification, content.firstChild);
+        
+        setTimeout(() => {
+          notification.remove();
+        }, 5000);
+      }
+    }
+
     // Main application
     document.addEventListener('DOMContentLoaded', function() {
       const addressAPI = new PSGCAddressAPI();
       const validator = new FormValidator();
+      const termsManager = new TermsManager();
       const form = document.getElementById('employerForm');
       const submitBtn = document.getElementById('submitBtn');
       const loadingOverlay = document.getElementById('loadingOverlay');
@@ -1878,8 +2704,8 @@ ob_end_flush();
       const preFilledCity = "<?php echo htmlspecialchars($parsed_address['city'] ?? ''); ?>";
       const preFilledBarangay = "<?php echo htmlspecialchars($parsed_address['barangay'] ?? ''); ?>";
       
-      // Load regions on page load
-      loadRegions();
+      // Load regions on page load (but only when form is shown)
+      // We'll load them when the form becomes visible
       
       async function loadRegions() {
         regionLoading.style.display = 'block';
@@ -2163,16 +2989,28 @@ ob_end_flush();
         e.target.value = value;
       });
       
+      // Birthdate validation - set max date to today
+      const birthdateInput = document.getElementById('birthdate');
+      const today = new Date().toISOString().split('T')[0];
+      birthdateInput.setAttribute('max', today);
+      
       // Form validation
       form.addEventListener('submit', async function(e) {
         e.preventDefault();
+        
+        // First validate terms acceptance
+        if (!termsManager.validateTerms()) {
+          showNotification('You must accept the Terms and Conditions to proceed.', 'error');
+          return;
+        }
         
         validator.clearErrors();
         
         // Validate required fields
         const requiredFields = [
           'last_name', 'first_name', 'email', 'company_name', 
-          'contact_person', 'region', 'province', 'city', 'barangay'
+          'contact_person', 'region', 'province', 'city', 'barangay',
+          'phone', 'gender', 'birthdate'
         ];
         
         requiredFields.forEach(field => {
@@ -2188,11 +3026,15 @@ ob_end_flush();
         
         // Validate phone
         const phone = phoneInput.value;
-        if (phone) {
-          validator.validatePhone(phone);
-        } else {
-          validator.errors.phone = 'Phone number is required';
-        }
+        validator.validatePhone(phone);
+        
+        // Validate gender
+        const gender = document.getElementById('gender').value;
+        validator.validateGender(gender);
+        
+        // Validate birthdate
+        const birthdate = birthdateInput.value;
+        validator.validateBirthdate(birthdate);
         
         // Validate industry
         const industryId = industrySelect.value;
@@ -2249,6 +3091,21 @@ ob_end_flush();
           submitBtn.disabled = false;
         }
       });
+      
+      // Load regions when form becomes visible
+      const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+          if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+            if (form.style.display !== 'none') {
+              loadRegions();
+              observer.disconnect(); // Stop observing once loaded
+            }
+          }
+        });
+      });
+      
+      // Start observing the form for style changes
+      observer.observe(form, { attributes: true });
       
       // Helper functions
       function showLoading(show) {

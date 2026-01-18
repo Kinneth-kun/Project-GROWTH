@@ -447,21 +447,20 @@ try {
     $feedback_stmt->execute();
     $total_feedback = $feedback_stmt->fetchColumn() ?: 0;
     
-    // Get data for charts
-    // Monthly graduate registrations
-    $monthly_grads_stmt = $conn->prepare("
+    // MODIFIED: Get data for charts - Changed from 6 months to 30 days for alumni registrations
+    // Daily graduate registrations for last 30 days
+    $daily_grads_stmt = $conn->prepare("
         SELECT 
-            YEAR(usr_created_at) as year, 
-            MONTH(usr_created_at) as month, 
+            DATE(usr_created_at) as registration_date,
             COUNT(*) as count
         FROM users 
         WHERE usr_role = 'graduate'
-        AND usr_created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-        GROUP BY YEAR(usr_created_at), MONTH(usr_created_at)
-        ORDER BY year, month
+        AND usr_created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY DATE(usr_created_at)
+        ORDER BY registration_date
     ");
-    $monthly_grads_stmt->execute();
-    $monthly_grads = $monthly_grads_stmt->fetchAll(PDO::FETCH_ASSOC);
+    $daily_grads_stmt->execute();
+    $daily_grads = $daily_grads_stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Application status distribution
     $app_status_stmt = $conn->prepare("
@@ -830,13 +829,32 @@ function getStaffNotificationLink($notification) {
 
 // Prepare data for charts
 $month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+$day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-// Prepare graduate registrations data
+// MODIFIED: Prepare daily graduate registrations data for last 30 days
 $grad_registrations_data = [];
 $grad_registrations_labels = [];
-foreach ($monthly_grads as $grad) {
-    $grad_registrations_data[] = $grad['count'];
-    $grad_registrations_labels[] = $month_names[$grad['month'] - 1] . ' ' . $grad['year'];
+
+// Create an array with all dates from the last 30 days
+$last_30_days = [];
+for ($i = 29; $i >= 0; $i--) {
+    $date = date('Y-m-d', strtotime("-$i days"));
+    $last_30_days[$date] = 0;
+}
+
+// Fill the array with actual data
+foreach ($daily_grads as $grad) {
+    $date = $grad['registration_date'];
+    if (isset($last_30_days[$date])) {
+        $last_30_days[$date] = $grad['count'];
+    }
+}
+
+// Convert to arrays for the chart
+foreach ($last_30_days as $date => $count) {
+    $grad_registrations_data[] = $count;
+    // Format label as "Mon 15"
+    $grad_registrations_labels[] = date('D j', strtotime($date));
 }
 
 // Application status distribution
@@ -853,6 +871,82 @@ $job_status_counts = [];
 foreach ($job_status_data as $status) {
     $job_status_labels[] = ucfirst($status['job_status']);
     $job_status_counts[] = $status['count'];
+}
+
+// Calculate percentages for progress bars
+$grads_assisted_percent = min(round(($graduates_assisted / $total_graduates) * 100), 100);
+$pending_jobs_percent = min(round(($pending_jobs / $total_jobs) * 100), 100);
+$unmatched_grads_percent = min(round(($unmatched_graduates / $total_graduates) * 100), 100);
+$incomplete_portfolios_percent = min(round(($incomplete_portfolios / $total_graduates) * 100), 100);
+$recent_employers_percent = min(round(($recent_employers / $total_employers) * 100), 100);
+$recent_activity_percent = min(round(($recent_activity / $total_graduates) * 100), 100);
+
+// MODIFIED: Calculate resource statistics percentages
+$resources_shared_percent = $total_graduates > 0 ? min(round(($total_resources / $total_graduates) * 100), 100) : 0;
+$resources_read_percent = $total_resources > 0 ? min(round(($read_resources / $total_resources) * 100), 100) : 0;
+
+// Get comprehensive notifications for staff
+$notifications = [];
+$unread_notif_count = 0;
+try {
+    $notif_stmt = $conn->prepare("
+        SELECT * FROM notifications 
+        WHERE notif_usr_id = :staff_id 
+        ORDER BY notif_created_at DESC 
+        LIMIT 15
+    ");
+    $notif_stmt->bindParam(':staff_id', $staff_id);
+    $notif_stmt->execute();
+    $notifications = $notif_stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    foreach ($notifications as $notif) {
+        if (!$notif['notif_is_read']) $unread_notif_count++;
+    }
+    
+    // If no notifications found, create some default ones based on system status
+    if (empty($notifications)) {
+        $notifications = generateDefaultStaffNotifications($conn, $staff_id, $pending_jobs, $unmatched_graduates, $incomplete_portfolios);
+        $unread_notif_count = count($notifications);
+    }
+} catch (PDOException $e) {
+    error_log("Staff notifications query error: " . $e->getMessage());
+    // Generate default notifications based on current data
+    $notifications = generateDefaultStaffNotifications($conn, $staff_id, $pending_jobs, $unmatched_graduates, $incomplete_portfolios);
+    $unread_notif_count = count($notifications);
+}
+
+// Get recent activities for the activity log - FIXED QUERY
+try {
+    $recent_activities_stmt = $conn->prepare("
+        SELECT 
+            ua.activity_id,
+            ua.activity_usr_id,
+            ua.activity_type,
+            ua.activity_details,
+            ua.activity_date,
+            u.usr_name,
+            u.usr_role
+        FROM user_activities ua
+        LEFT JOIN users u ON ua.activity_usr_id = u.usr_id
+        WHERE ua.activity_type IN ('job_applied', 'profile_updated', 'job_posted', 'account_approved', 'user_registered')
+        OR ua.activity_details LIKE '%applied%'
+        OR ua.activity_details LIKE '%profile%'
+        OR ua.activity_details LIKE '%job%'
+        OR ua.activity_details LIKE '%registered%'
+        ORDER BY ua.activity_date DESC 
+        LIMIT 10
+    ");
+    $recent_activities_stmt->execute();
+    $recent_activities = $recent_activities_stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // If no activities found, generate sample data from other tables
+    if (empty($recent_activities)) {
+        $recent_activities = generateRecentActivitiesFromOtherTables($conn);
+    }
+} catch (PDOException $e) {
+    error_log("Recent activities query error: " . $e->getMessage());
+    // Generate sample activities from other tables as fallback
+    $recent_activities = generateRecentActivitiesFromOtherTables($conn);
 }
 ?>
 
@@ -1892,14 +1986,14 @@ foreach ($job_status_data as $status) {
         </div>
       </div>
       
-      <!-- Graduate Registration Trends Card -->
+      <!-- MODIFIED: Alumni Registration Trends Card - Now shows 30 days -->
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">ALUMNI REGISTRATIONS</h3>
+          <h3 class="card-title">ALUMNI REGISTRATIONS (30 DAYS)</h3>
           <i class="fas fa-chart-line card-icon"></i>
         </div>
         <div class="card-value"><?= $total_graduates ?> Total</div>
-        <div class="card-footer">Monthly registration</div>
+        <div class="card-footer">Daily registration trends over the last 30 days</div>
         <div class="chart-container">
           <canvas id="gradRegistrationsChart"></canvas>
         </div>
@@ -2026,7 +2120,7 @@ foreach ($job_status_data as $status) {
 
     // Enhanced Charts initialization with professional styling
     document.addEventListener('DOMContentLoaded', function() {
-      // Graduate Registrations Chart (Line)
+      // MODIFIED: Graduate Registrations Chart (Line) - Now shows 30 days
       const gradRegistrationsCtx = document.getElementById('gradRegistrationsChart').getContext('2d');
       new Chart(gradRegistrationsCtx, {
         type: 'line',
@@ -2043,8 +2137,9 @@ foreach ($job_status_data as $status) {
             pointBackgroundColor: 'rgba(110, 3, 3, 1)',
             pointBorderColor: '#fff',
             pointBorderWidth: 2,
-            pointRadius: 5,
-            pointHoverRadius: 7
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            pointHitRadius: 10
           }]
         },
         options: {
@@ -2064,7 +2159,16 @@ foreach ($job_status_data as $status) {
                 size: 11
               },
               padding: 12,
-              cornerRadius: 6
+              cornerRadius: 6,
+              callbacks: {
+                title: function(tooltipItems) {
+                  // Show full date in tooltip
+                  const index = tooltipItems[0].dataIndex;
+                  const date = new Date();
+                  date.setDate(date.getDate() - (29 - index));
+                  return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
+                }
+              }
             }
           },
           scales: {
@@ -2076,19 +2180,42 @@ foreach ($job_status_data as $status) {
               ticks: {
                 font: {
                   size: 11
+                },
+                precision: 0
+              },
+              title: {
+                display: true,
+                text: 'Number of Registrations',
+                font: {
+                  size: 11,
+                  weight: 'bold'
                 }
               }
             },
             x: {
               grid: {
-                display: false
+                color: 'rgba(0, 0, 0, 0.03)'
               },
               ticks: {
                 font: {
-                  size: 11
+                  size: 10
+                },
+                maxRotation: 45,
+                minRotation: 45
+              },
+              title: {
+                display: true,
+                text: 'Last 30 Days',
+                font: {
+                  size: 11,
+                  weight: 'bold'
                 }
               }
             }
+          },
+          interaction: {
+            intersect: false,
+            mode: 'index'
           }
         }
       });

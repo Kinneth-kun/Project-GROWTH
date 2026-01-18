@@ -306,7 +306,8 @@ function checkSystemSettingsNotifications($conn, $old_settings, $new_settings) {
     
     // Compare old and new settings to only notify on actual changes
     if ($old_settings['auto_approve_users'] != $new_settings['auto_approve_users']) {
-        $changed_settings[] = "Auto-approve users: " . ($new_settings['auto_approve_users'] ? "Enabled" : "Disabled");
+        // MODIFIED: Specify that employers are excluded from auto-approve
+        $changed_settings[] = "Auto-approve users (excluding employers): " . ($new_settings['auto_approve_users'] ? "Enabled" : "Disabled");
     }
     if ($old_settings['auto_approve_jobs'] != $new_settings['auto_approve_jobs']) {
         $changed_settings[] = "Auto-approve jobs: " . ($new_settings['auto_approve_jobs'] ? "Enabled" : "Disabled");
@@ -1484,7 +1485,7 @@ $recent_notifications = $recent_notif_stmt->fetchAll(PDO::FETCH_ASSOC);
                         <?php else: ?>
                             <div class="no-notifications">No notifications</div>
                         <?php endif; ?>
-                    </div>
+                        </div>
                 </div>
                 <div class="admin-profile" id="adminProfile">
                     <img src="<?= $admin_profile_photo ?>" alt="Admin">
@@ -1585,7 +1586,8 @@ $recent_notifications = $recent_notif_stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="toggle-container">
                         <div class="toggle-info">
                             <h4>Auto-approve User Registrations</h4>
-                            <p>Automatically approve new user registrations (all user types)</p>
+                            <!-- MODIFIED: Added note about excluding employers -->
+                            <p>Automatically approve new graduate and staff registrations (employers always require manual approval)</p>
                         </div>
                         <label class="toggle-switch">
                             <input type="checkbox" name="auto_approve_users" <?= $auto_approve_users_setting ? 'checked' : '' ?>>
